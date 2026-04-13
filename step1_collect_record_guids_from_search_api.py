@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv
 import os
 import time
+from pathlib import Path
 from typing import Any
 
 import requests
@@ -11,6 +12,7 @@ ARCHIVES = ["bhi", "zar", "frl", "rhl", "hua", "gra", "nha"]
 BASE_URL = "https://api.openarch.nl/1.1/records/search.php"
 PAGE_SIZE = 100
 OUTPUT_FILE = "records.csv"
+TEST_OUTPUT_FILE = "test_results/step1/records_test.csv"
 SOURCETYPE = "Memories van Successie"
 USER_AGENT = os.getenv("OPENARCH_USER_AGENT", "memories-crawl/1.0")
 
@@ -73,40 +75,37 @@ def fetch_page(session: requests.Session, archive: str, offset: int) -> dict[str
         "format": "json",
     }
     response = session.get(BASE_URL, params=params, timeout=60)
+    if response.status_code == 429:
+        time.sleep(5)
+        response = session.get(BASE_URL, params=params, timeout=60)
     response.raise_for_status()
     return response.json()
 
 
-def main() -> None:
+
+def main(output_file: str = OUTPUT_FILE) -> None:
     session = requests.Session()
     session.headers["User-Agent"] = USER_AGENT
 
     seen: set[tuple[str, str]] = set()
-    with open(OUTPUT_FILE, "w", newline="", encoding="utf-8") as f:
+    Path(output_file).parent.mkdir(parents=True, exist_ok=True)
+    with open(output_file, "w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
         writer.writerow(["archive", "record_id", "url"])
 
         for archive in ARCHIVES:
-            offset = 0
-            total = None
-            while True:
-                payload = fetch_page(session, archive, offset)
-                if total is None:
-                    total = _get_total(payload)
-                docs = _docs(payload)
-                if not docs:
-                    break
-                for record in docs[:2]:
-                    record_id = _record_id(record)
-                    if not record_id:
-                        continue
-                    key = (archive, record_id)
-                    if key in seen:
-                        continue
-                    seen.add(key)
-                    writer.writerow([archive, record_id, _record_url(archive, record_id)])
-                break
-            time.sleep(0.26)
+            payload = fetch_page(session, archive, 0)
+            docs = _docs(payload)
+            for record in docs[:2]:
+                record_id = _record_id(record)
+                if not record_id:
+                    continue
+                key = (archive, record_id)
+                if key in seen:
+                    continue
+                seen.add(key)
+                writer.writerow([archive, record_id, _record_url(archive, record_id)])
+            time.sleep(1.5)
 
 
 if __name__ == "__main__":
