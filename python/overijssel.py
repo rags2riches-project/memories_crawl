@@ -103,6 +103,34 @@ def _parse_thumb_src(src: str) -> dict | None:
     }
 
 
+def _get_token_cache_path(minr: int) -> Path:
+    """Return path to the token cache file for a given minr."""
+    return OUTPUT_DIR / f"tokens_minr_{minr}.json"
+
+
+def _load_cached_tokens(minr: int) -> list[dict] | None:
+    """Load cached page tokens if they exist and are non-empty."""
+    cache_path = _get_token_cache_path(minr)
+    if cache_path.exists():
+        try:
+            with open(cache_path, "r", encoding="utf-8") as f:
+                tokens = json.load(f)
+            if tokens:
+                print(f"    loaded {len(tokens)} cached tokens")
+                return tokens
+        except (json.JSONDecodeError, IOError):
+            pass
+    return None
+
+
+def _save_cached_tokens(minr: int, tokens: list[dict]) -> None:
+    """Save page tokens to cache file."""
+    cache_path = _get_token_cache_path(minr)
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(cache_path, "w", encoding="utf-8") as f:
+        json.dump(tokens, f, ensure_ascii=False, indent=2)
+
+
 def _fetch_page_tokens_via_playwright(minr: int) -> list[dict]:
     """Return [{invnr, page, miahd, rdt, open}, ...] for every scan page under minr.
 
@@ -110,8 +138,15 @@ def _fetch_page_tokens_via_playwright(minr: int) -> list[dict]:
     given kantoor minr, and iterates over all child item stk3 strips to extract
     per-page auth tokens.
 
+    Results are cached to avoid re-fetching on subsequent runs.
+
     Requires: pip install playwright && playwright install chromium
     """
+    # Try to load from cache first
+    cached = _load_cached_tokens(minr)
+    if cached is not None:
+        return cached
+
     from playwright.sync_api import sync_playwright  # noqa: PLC0415
 
     # last-wins dedup: later stk3 calls give more-specific tokens than auto-load
@@ -150,6 +185,10 @@ def _fetch_page_tokens_via_playwright(minr: int) -> list[dict]:
 
     result = sorted(pages_by_key.values(), key=lambda r: (r["invnr"], r["page"]))
     print(f"    total pages collected: {len(result)}")
+
+    # Save to cache for future runs
+    _save_cached_tokens(minr, result)
+
     return result
 
 
