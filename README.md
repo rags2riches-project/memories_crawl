@@ -21,7 +21,7 @@ The registers are organised by fiscal district (*kantoor*) and contain individua
 | Noord-Holland | Noord-Hollands Archief | Open Archieven | ✅ |
 | Zuid-Holland | Nationaal Archief | Custom scraper | ✅ |
 | Drenthe | Drents Archief | Memorix REST API | ✅ |
-| Overijssel | Historisch Centrum Overijssel | MAIS viewer | ⚠️ incomplete |
+| Overijssel | Historisch Centrum Overijssel | MAIS viewer + Playwright | ✅ |
 
 ---
 
@@ -33,6 +33,9 @@ The registers are organised by fiscal district (*kantoor*) and contain individua
 # Install dependencies
 uv sync
 
+# First-time Overijssel setup (Playwright/Chromium)
+playwright install chromium
+
 # Download all archives (takes several hours)
 uv run python main.py all
 
@@ -40,7 +43,7 @@ uv run python main.py all
 uv run python main.py openarchieven
 uv run python main.py nationaalarchief
 uv run python main.py drentsarchief
-uv run python main.py overijssel    # ⚠️ partially implemented
+uv run python main.py overijssel
 ```
 
 ---
@@ -97,20 +100,23 @@ Output: `scans/drentsarchief/{deed_id}/`.
 
 ---
 
-### Overijssel – Historisch Centrum Overijssel ⚠️
+### Overijssel – Historisch Centrum Overijssel
 
 `uv run python main.py overijssel`  
 Source file: `python/overijssel.py`
 
-**Status: concept only.** The HCO uses a MAIS Internet viewer system where scan images require per-page authentication tokens (`miahd`, `rdt`, `open`) that are injected by the browser-side JavaScript viewer. These tokens cannot be retrieved with plain HTTP requests.
+The HCO uses a MAIS Internet viewer where scan images require per-page authentication tokens (`miahd`, `rdt`, `open`) injected by the browser-side JavaScript. These cannot be retrieved with plain HTTP requests.
 
-**What is implemented**: the download logic and the known inventory structure (Kantoor Almelo minr values).
+The pipeline uses **Playwright/Chromium** to drive a headless browser:
 
-**What is missing**:
-- The `minr` values for the remaining 9 kantoren (Deventer, Enschede, Hardenberg, Kampen, Oldenzaal, Ommen, Steenwijk, Zwolle).
-- Token extraction, which requires the `playwright` Python package to drive a browser session and capture the rendered `<img>` src attributes from the MAIS stk3 viewer.
+1. Navigates to the MAIS `inv3` inventory page for each kantoor, establishing the required session cookies automatically.
+2. Calls `mi_inv3_toggle_stk()` for each invnr volume to load the stk3 thumbnail strip.
+3. Harvests per-page tokens from the rendered `<img src>` attributes.
+4. Downloads full-size scans using those tokens.
 
-To complete the Overijssel pipeline, install `playwright`, implement `_fetch_page_tokens_via_playwright()` in `python/overijssel.py`, and fill in the `KANTOOR_MINR` dictionary.
+**First-time setup**: run `playwright install chromium` after `uv sync`.
+
+Covers all 10 kantoren: Almelo, Deventer, Enschede, Goor, Kampen, Ommen, Raalte, Steenwijk, Vollenhove, Zwolle.
 
 ---
 
