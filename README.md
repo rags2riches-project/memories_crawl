@@ -12,9 +12,9 @@ The pipeline works like this:
 
 The project currently includes:
 
-- `step1_collect_record_guids_from_search_api.py`
-- `step2_oai_pmh_dumps.py`
-- `step3_download_steps.py`
+- `python/step1_collect_record_guids_from_search_api.py`
+- `python/step2_oai_pmh_dumps.py`
+- `python/step3_download_steps.py`
 - pytest coverage for all three steps
 
 Step 2 now uses a streaming XML parser and a UTF-8-safe sanitizer so it can process gzip-compressed XML dumps without loading the entire decompressed file into memory at once.
@@ -33,7 +33,7 @@ There is no single ready-made national image download for this collection. This 
 
 ## Step 1: collect record IDs from the search API
 
-File: `step1_collect_record_guids_from_search_api.py`
+File: `python/step1_collect_record_guids_from_search_api.py`
 
 What it does:
 
@@ -63,12 +63,12 @@ Current behavior:
 Run it:
 
 ```bash
-uv run python step1_collect_record_guids_from_search_api.py
+uv run python python/step1_collect_record_guids_from_search_api.py
 ```
 
 ## Step 2: extract scan URLs from archive dumps
 
-File: `step2_oai_pmh_dumps.py`
+File: `python/step2_oai_pmh_dumps.py`
 
 What it does:
 
@@ -104,13 +104,13 @@ Current behavior:
 Run it:
 
 ```bash
-uv run python step2_oai_pmh_dumps.py
+uv run python python/step2_oai_pmh_dumps.py
 ```
 
 Example targeted run:
 
 ```bash
-uv run python step2_oai_pmh_dumps.py \
+uv run python python/step2_oai_pmh_dumps.py \
   --output test_results/step2/scan_urls_test.csv \
   --dumps-dir dumps \
   --archives bhi \
@@ -119,7 +119,7 @@ uv run python step2_oai_pmh_dumps.py \
 
 ## Step 3: download the scan files
 
-File: `step3_download_steps.py`
+File: `python/step3_download_steps.py`
 
 What it does:
 
@@ -146,13 +146,13 @@ Why it matters:
 Run it:
 
 ```bash
-uv run python step3_download_steps.py
+uv run python python/step3_download_steps.py
 ```
 
 Example targeted run:
 
 ```bash
-uv run python step3_download_steps.py \
+uv run python python/step3_download_steps.py \
   --input test_results/step2/scan_urls_test.csv \
   --output-dir test_results/step3
 ```
@@ -162,15 +162,15 @@ uv run python step3_download_steps.py \
 A small end-to-end test run looks like this:
 
 ```bash
-uv run python step1_collect_record_guids_from_search_api.py
+uv run python python/step1_collect_record_guids_from_search_api.py
 
-uv run python step2_oai_pmh_dumps.py \
+uv run python python/step2_oai_pmh_dumps.py \
   --output test_results/step2/scan_urls_test.csv \
   --dumps-dir dumps \
   --archives bhi \
   --limit-per-archive 1
 
-uv run python step3_download_steps.py \
+uv run python python/step3_download_steps.py \
   --input test_results/step2/scan_urls_test.csv \
   --output-dir test_results/step3
 ```

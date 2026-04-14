@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import csv
 
-import step3_download_steps as step3
+from python import step3_download_steps as step3
 
 
 class DummyResponse:
@@ -52,7 +52,7 @@ def test_step3_downloads_files_from_csv(monkeypatch, tmp_path):
     old_argv = sys.argv
     try:
         sys.argv = [
-            "step3_download_steps.py",
+            "python/step3_download_steps.py",
             "--input",
             str(input_path),
             "--output-dir",

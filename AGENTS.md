@@ -6,14 +6,14 @@ This repository contains a 3-step Python pipeline for collecting and downloading
 
 The pipeline is intentionally split into independent scripts:
 
-1. `step1_collect_record_guids_from_search_api.py`
+1. `python/step1_collect_record_guids_from_search_api.py`
    - queries the Open Archieven search API
    - writes a CSV of matching records
-2. `step2_oai_pmh_dumps.py`
+2. `python/step2_oai_pmh_dumps.py`
    - reads archive XML dump files
    - extracts scan URLs from `a2a:A2A` records
    - writes a CSV of scan URLs
-3. `step3_download_steps.py`
+3. `python/step3_download_steps.py`
    - downloads the scans listed by step 2
 
 ## Current project state
@@ -28,12 +28,12 @@ The pipeline is intentionally split into independent scripts:
 
 ## Key files
 
-- `step1_collect_record_guids_from_search_api.py`
-- `step2_oai_pmh_dumps.py`
-- `step3_download_steps.py`
-- `tests/test_step1_collect_record_guids_from_search_api.py`
-- `tests/test_step2_oai_pmh_dumps.py`
-- `tests/test_step3_download_steps.py`
+- `python/step1_collect_record_guids_from_search_api.py`
+- `python/step2_oai_pmh_dumps.py`
+- `python/step3_download_steps.py`
+- `tests/test_python/step1_collect_record_guids_from_search_api.py`
+- `tests/test_python/step2_oai_pmh_dumps.py`
+- `tests/test_python/step3_download_steps.py`
 - `README.md`
 - `pyproject.toml`
 
@@ -44,9 +44,9 @@ Use `uv` for all Python execution.
 ### Run scripts
 
 ```bash
-uv run python step1_collect_record_guids_from_search_api.py
-uv run python step2_oai_pmh_dumps.py
-uv run python step3_download_steps.py
+uv run python python/step1_collect_record_guids_from_search_api.py
+uv run python python/step2_oai_pmh_dumps.py
+uv run python python/step3_download_steps.py
 ```
 
 ### Run tests

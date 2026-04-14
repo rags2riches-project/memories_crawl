@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import csv
 
-import step1_collect_record_guids_from_search_api as step1
+from python import step1_collect_record_guids_from_search_api as step1
 
 
 class DummyResponse:

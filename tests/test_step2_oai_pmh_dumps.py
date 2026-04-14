@@ -3,7 +3,7 @@ from __future__ import annotations
 import csv
 import gzip
 
-import step2_oai_pmh_dumps as step2
+from python import step2_oai_pmh_dumps as step2
 
 
 def test_step2_sanitizes_and_extracts_half_scan_urls(tmp_path):
@@ -38,7 +38,7 @@ def test_step2_sanitizes_and_extracts_half_scan_urls(tmp_path):
     output = tmp_path / "scan_urls.csv"
     dumps_dir = tmp_path
     argv = [
-        "step2_oai_pmh_dumps.py",
+        "python/step2_oai_pmh_dumps.py",
         "--output",
         str(output),
         "--dumps-dir",
