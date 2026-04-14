@@ -1,2 +1,8 @@
 .env
 __pycache__/
+.playwright-mcp/
+scans/
+dumps/
+*.csv
+*.txt
+.venv/
