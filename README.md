@@ -1,110 +1,225 @@
 # Memories Crawl
 
-This project is a 3-step pipeline for collecting downloadable scan URLs for the Dutch archival series called *Memories van Successie*.
+This repository is a small 3-step pipeline for collecting and downloading scans from the Dutch archival series *Memories van Successie* via Open Archieven.
 
-The goal is to move from a large public metadata search index to a list of direct file URLs, and then download the scans to disk.
+The pipeline works like this:
+
+1. query the Open Archieven search API for matching records
+2. read the archive XML dumps to find direct scan URLs for those records
+3. download the image files to disk
+
+## Current status
+
+The project currently includes:
+
+- `step1_collect_record_guids_from_search_api.py`
+- `step2_oai_pmh_dumps.py`
+- `step3_download_steps.py`
+- pytest coverage for all three steps
+
+Step 2 now uses a streaming XML parser and a UTF-8-safe sanitizer so it can process gzip-compressed XML dumps without loading the entire decompressed file into memory at once.
 
 ## Why this exists
 
-Open Archieven aggregates archival metadata from several Dutch archives. That metadata includes record identifiers and, in many cases, links to scans.
+Open Archieven exposes this data through several different layers:
 
-The problem is that the site does not give you one simple national download. Instead, the data is spread across:
+- a search API for locating records
+- per-archive XML exports with richer metadata
+- direct image URLs embedded in those XML records
 
-- a search API for finding records
-- archive dumps containing richer XML metadata
-- direct scan URLs that can be used to download the actual images
+There is no single ready-made national image download for this collection. This repository breaks the process into three explicit stages so each stage can be inspected, rerun, and tested separately.
 
-This repository breaks that into three small scripts so each step is easy to run and retry.
+## The three steps
 
-## The 3 steps
-
-### Step 1: collect record GUIDs from the search API
+## Step 1: collect record IDs from the search API
 
 File: `step1_collect_record_guids_from_search_api.py`
 
 What it does:
-- Queries the Open Archieven search API archive by archive
-- Filters results for `Memories van Successie`
-- Extracts the record identifier for each matching record
-- Writes the results to `records.csv`
 
-Why this step matters:
-- It builds the master list of records we care about
-- This is the starting point for everything else
-- Without record IDs, we cannot resolve scan URLs or download anything
+- queries the Open Archieven search API once per archive
+- requests records with `sourcetype=Memories van Successie`
+- extracts a record identifier from each result
+- writes a CSV file with archive code, record ID, and a human-readable record URL
 
-Output:
-- `records.csv`
-- Columns: `archive, record_id, url`
+Output format:
 
-### Step 2: extract scan URLs from OAI-PMH/XML dumps
+```csv
+archive,record_id,url
+bhi,c085c700-428a-5781-1f71-133eba260c9d,https://www.openarchieven.nl/bhi:c085c700-428a-5781-1f71-133eba260c9d
+zar,05501474-2f20-7def-c483-6239cecd8a52,https://www.openarchieven.nl/zar:05501474-2f20-7def-c483-6239cecd8a52
+```
+
+Why it matters:
+
+- this gives you a compact list of relevant records
+- it is the discovery step for the rest of the pipeline
+- the output can be inspected before downloading anything
+
+Current behavior:
+
+- the script currently writes the first 2 records per archive, which is useful for testing the pipeline on a small sample
+
+Run it:
+
+```bash
+uv run python step1_collect_record_guids_from_search_api.py
+```
+
+## Step 2: extract scan URLs from archive dumps
 
 File: `step2_oai_pmh_dumps.py`
 
 What it does:
-- Downloads the per-archive dump files from Open Archieven
-- Unpacks the archive files
-- Reads the XML metadata inside them
-- Finds the scan URLs embedded in the record metadata
-- Writes those scan URLs to `scan_urls.csv`
 
-Why this step matters:
-- The scan URLs are not in the search results themselves
-- The dumps contain richer metadata than the search API
-- This is the fastest way to get direct download links for many records without making hundreds of thousands of API calls
+- downloads archive dump files from Open Archieven if they are not already present in `dumps/`
+- opens the gzip-compressed XML dump for each archive
+- incrementally decodes and sanitizes the XML stream
+- parses `a2a:A2A` records from the dump
+- filters to records with source type `Memories van Successie`
+- extracts scan URLs from `SourceAvailableScans/Scan/Uri` with a fallback to `Scan/Uri`
+- writes a CSV of downloadable scan URLs
 
-Output:
-- `scan_urls.csv`
-- Columns: `archive, record_id, page_seq, scan_uri`
+Output format:
 
-### Step 3: download the scans
+```csv
+archive,record_id,page_seq,scan_uri
+bhi,{009b8d8b-007b-b13d-b95f-643be55bf8aa},1,https://images.memorix.nl/bhic/thumb/640x480/acaa82ee-b8a7-cef9-2c37-375712111288.jpg
+```
+
+Why it matters:
+
+- the search API does not provide the direct image file URLs
+- the archive dumps contain the richer metadata needed to find those URLs
+- this step transforms metadata records into concrete download targets
+
+Current behavior:
+
+- the script emits about half of the available scan URLs per record, with a minimum of 1 URL per record
+- this is intentional for validation and small sample runs
+- the script supports targeted runs with:
+  - `--archives` to restrict processing to one or more archives
+  - `--limit-per-archive` to stop after a certain number of matching records
+
+Run it:
+
+```bash
+uv run python step2_oai_pmh_dumps.py
+```
+
+Example targeted run:
+
+```bash
+uv run python step2_oai_pmh_dumps.py \
+  --output test_results/step2/scan_urls_test.csv \
+  --dumps-dir dumps \
+  --archives bhi \
+  --limit-per-archive 1
+```
+
+## Step 3: download the scan files
 
 File: `step3_download_steps.py`
 
 What it does:
-- Reads `scan_urls.csv`
-- Downloads each scan URL
-- Saves the files into folders by archive and record ID
 
-Why this step matters:
-- This is the actual download phase
-- It turns a list of URLs into files on your hard drive
-- The folder structure makes the files easier to resume, inspect, and organize
+- reads the CSV generated by step 2
+- downloads each scan URL
+- stores files under `archive/record_id/page_seq.ext`
+- skips files that already exist and are non-empty
 
-Output:
-- A `scans/` directory with this structure:
+Directory layout:
 
 ```text
 scans/
-  archive_code/
-    record_id/
+  bhi/
+    {009b8d8b-007b-b13d-b95f-643be55bf8aa}/
       1.jpg
-      2.jpg
-      3.jpg
 ```
 
-## Typical workflow
+Why it matters:
 
-Run the scripts in order:
+- this is the step that turns metadata into actual image files
+- the output structure is stable and resume-friendly
+- existing files are not redownloaded
 
-1. `python step1_collect_record_guids_from_search_api.py`
-2. `python step2_oai_pmh_dumps.py`
-3. `python step3_download_steps.py`
+Run it:
+
+```bash
+uv run python step3_download_steps.py
+```
+
+Example targeted run:
+
+```bash
+uv run python step3_download_steps.py \
+  --input test_results/step2/scan_urls_test.csv \
+  --output-dir test_results/step3
+```
+
+## End-to-end example
+
+A small end-to-end test run looks like this:
+
+```bash
+uv run python step1_collect_record_guids_from_search_api.py
+
+uv run python step2_oai_pmh_dumps.py \
+  --output test_results/step2/scan_urls_test.csv \
+  --dumps-dir dumps \
+  --archives bhi \
+  --limit-per-archive 1
+
+uv run python step3_download_steps.py \
+  --input test_results/step2/scan_urls_test.csv \
+  --output-dir test_results/step3
+```
+
+Example result:
+
+```text
+test_results/step3/
+  bhi/
+    {009b8d8b-007b-b13d-b95f-643be55bf8aa}/
+      1.jpg
+```
+
+## Testing
+
+The repository includes pytest coverage for all three steps.
+
+Install dependencies:
+
+```bash
+uv sync
+```
+
+Run tests:
+
+```bash
+uv run pytest -q
+```
+
+Current result during development:
+
+- `3 passed`
 
 ## Dependencies
 
-This project uses:
+Runtime dependency:
+
 - `requests`
 
-Install and run with `uv`.
+Development dependency:
 
-## Notes
+- `pytest`
 
-- The scripts are written to be resilient to small response-format differences.
-- The project is designed for large-scale harvesting, so it uses simple retry-friendly file outputs.
-- The Open Archieven API may rate-limit requests, so running Step 1 or Step 2 repeatedly in quick succession may require delays.
+Dependencies are managed with `uv`.
 
-## Important limitation
+## Notes and limitations
 
-This repository does not guarantee that every record has a downloadable scan.
-Some records may be indexed in the metadata but not yet available as images.
+- Step 1 currently performs a small sample run rather than a full crawl.
+- Step 2 processes the XML dumps incrementally, but the dumps are still very large and may take a long time to scan.
+- Not every metadata record necessarily has downloadable scans.
+- Some archive XML contains malformed byte sequences; step 2 now sanitizes those during streaming decode.
+- Step 3 skips already-downloaded files, which makes reruns safer.
