@@ -1,17 +1,45 @@
 ---
-name: Overijssel MAIS token blocker
-description: Why Overijssel is incomplete and exactly what needs to be implemented to finish it
+name: Overijssel MAIS token extraction — SOLVED
+description: How MAIS per-page auth tokens are extracted and what the complete kantoor minr mapping is
 type: project
-originSessionId: f010dbb7-39a9-4ee7-9487-db07934e9335
 ---
-The Historisch Centrum Overijssel (HCO) uses the MAIS Internet viewer system. Images at `preserve2.archieven.nl` require three per-page auth tokens in the query string: `miahd`, `rdt`, `open`. Without them the server returns HTTP 202 + an SVG placeholder.
+The Historisch Centrum Overijssel (HCO) uses the MAIS Internet viewer system. Images at `preserve2.archieven.nl` require three per-page auth tokens: `miahd`, `rdt`, `open`. These are **per-page**: each scan page has its own unique `miahd` and `open`.
 
-These tokens are only available inside a live browser JS session — the MAIS stk3 viewer endpoint returns an empty `<div>` when called with plain `requests`.
+**SOLVED April 2026** — `python/overijssel.py` is fully implemented.
 
-**Two concrete TODOs** (see also `CLAUDE.md` and `python/overijssel.py`):
+## How token extraction works
 
-1. **Fill in `KANTOOR_MINR` dict** — only Almelo (`minr=2227676`) is known. The other 9 kantoren (Deventer, Enschede, Hardenberg, Kampen, Oldenzaal, Ommen, Steenwijk, Zwolle, Overige) need their `minr` values found by browsing the collectieoverijssel.nl tree view for `miadt=141, micode=0136.4`.
+1. Navigate (Playwright/Chromium) to the MAIS inv3 page for the kantoor minr:
+   `https://collectieoverijssel.nl/collectie/archieven/?mivast=20&mizig=210&miadt=141&miaet=1&micode=0136.4&minr={minr}&milang=nl&miview=inv3`
+2. The page auto-loads PHPSESSID + mi_sessid cookies (WordPress + MAIS).
+3. Collect all `a[onclick*="stk3"]` links — each is one invnr volume.
+4. For each: call `mi_inv3_toggle_stk(args)` via `page.evaluate()`.
+5. Wait ~1.5s, harvest `img[src*="/fonc-hco/"]` from the DOM.
+6. Parse `invnr`, `page`, `miahd`, `rdt`, `open` from each src URL.
 
-2. **Implement `_fetch_page_tokens_via_playwright(minr)`** — use `playwright-python` (add to `pyproject.toml`) to load the MAIS viewer, wait for thumbnails to render, then parse `miahd/rdt/open` from `<img>` src attributes in the stk3 strip.
+## Image URL format (corrected — original stub was wrong)
 
-**Why:** MAIS requires a valid `PHPSESSID` + `mi_sessid` cookie pair (set automatically when the viewer page loads in a browser) before the stk3 endpoint returns real content.
+```
+https://preserve2.archieven.nl/mi-20/fonc-hco/0136.4/{invnr}/
+    NL-ZlHCO_0136.4_{invnr}_{page:04d}.jpg
+    ?miadt=141&miahd={miahd}&mivast=20&rdt={rdt}&open={open}
+```
+
+Note the `{invnr}/` subdirectory — the original stub was missing this.
+
+## Complete KANTOOR_MINR mapping (verified April 2026)
+
+```python
+KANTOOR_MINR = {
+    "Almelo":     2227676,
+    "Deventer":   2227950,
+    "Enschede":   2228207,
+    "Goor":       2228335,   # original stub had wrong names: Hardenberg, Oldenzaal, Overige
+    "Kampen":     2228502,
+    "Ommen":      2228649,
+    "Raalte":     2228752,
+    "Steenwijk":  2228889,
+    "Vollenhove": 2228980,
+    "Zwolle":     2229046,
+}
+```

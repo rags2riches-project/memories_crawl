@@ -1,48 +1,34 @@
-"""Overijssel – Memories van Successie downloader (CONCEPT / STUB).
+"""Overijssel – Memories van Successie downloader.
 
 Archive: Historisch Centrum Overijssel (HCO)
 MAIS system: miadt=141, mivast=20, archive code 0136.4
-Proxy:  https://collectieoverijssel.nl/wp-content/plugins/mais-mdws/maisi_ajax_proxy.php
+WordPress proxy: https://collectieoverijssel.nl/wp-content/plugins/mais-mdws/maisi_ajax_proxy.php
 
-STATUS: INCOMPLETE – see TODOs below.
-
-What is known
-─────────────
-• Images are served by:
-    https://preserve2.archieven.nl/mi-20/fonc-hco/0136.4/
+How it works
+────────────
+Images live at:
+    https://preserve2.archieven.nl/mi-20/fonc-hco/0136.4/{invnr}/
         NL-ZlHCO_0136.4_{invnr}_{page:04d}.jpg
-    Full-size (JPEG ~2 MB): add query params  ?miadt=141&miahd={miahd}&mivast=20&rdt={rdt}&open={token}
-    Thumbnail (PNG ~43 KB):                   ?format=thumb&miadt=141&miahd={miahd}&mivast=20&rdt={rdt}&open={token}
-    Without tokens → HTTP 202 + SVG placeholder (not the real image).
+    Full-size: add query params  ?miadt=141&miahd={miahd}&mivast=20&rdt={rdt}&open={token}
+    Thumbnail: add              ?format=thumb&miadt=141&miahd={miahd}&mivast=20&rdt={rdt}&open={token}
+    Without tokens → HTTP 202 + SVG placeholder.
 
-• MAIS tree structure:
-    - 10 kantoren, each with two sub-items in access 0136.4:
-        * "Memories van Successie"  → include (minr values below)
-        * "Alfabetische Tafel" / "Klapper" → EXCLUDE
-    - Known minr values (Kantoor Almelo example):
-        MvS items 1–1577:   minr=2227676   (viewer: mizig=210, miaet=1, micode=0136.4)
-        Alfabetische Tafel: minr=2227919   ← EXCLUDE
+Tokens are per-page (miahd, open) and per-item (rdt). They are only visible in the
+``<img src>`` attributes of the MAIS stk3 thumbnail strip, which is rendered by JavaScript
+inside the collectieoverijssel.nl browser session.
 
-• The MAIS stk3 viewer endpoint (miview=stk3) returns the thumbnail list with per-page
-  miahd / rdt / open values embedded in <img> src attributes – but only when executed
-  inside the collectieoverijssel.nl browser session (requires JS + session cookie).
-  Fetching it with plain requests always returns an empty <div>.
+Strategy
+────────
+1. Navigate to the inv3 page for each kantoor's MvS minr (Playwright / Chromium).
+   This establishes the MAIS PHPSESSID + mi_sessid session cookies.
+2. Collect all child-item stk3 links from the DOM
+   (``a[onclick*="stk3"]``; each link corresponds to one invnr volume).
+3. For each link: call ``mi_inv3_toggle_stk(...)`` via evaluate() to trigger the AJAX
+   stk3 strip. Wait for thumbnails. Extract ``img[src*="/fonc-hco/"]`` hrefs.
+4. Parse invnr, page, miahd, rdt, open from each src URL.
+5. Download full-size images; write metadata.json sidecars.
 
-TODOs
-─────
-1. Find the minr values for all 10 kantoren (not just Almelo).
-   Approach A: Use playwright-python to navigate the MAIS tree and scrape minr links.
-   Approach B: Manually enumerate via browser devtools and hard-code the dict below.
-
-2. Extract per-image tokens (miahd, rdt, open) for all pages.
-   The stk3 endpoint returns HTML with <img> tags that carry these values.
-   Approach: Use playwright-python to load the stk3 viewer for each minr, wait for
-   the thumbnails to render, then read the img src attributes from the DOM.
-
-3. Once tokens are available, downloading is straightforward (see _download_file below).
-
-Dependency needed: pip install playwright && playwright install chromium
-(add playwright to pyproject.toml before using this module)
+Dependency: ``playwright`` must be installed and ``playwright install chromium`` run.
 """
 from __future__ import annotations
 
@@ -57,35 +43,120 @@ ARCHIVE_NAME = "Historisch Centrum Overijssel"
 ARCHIVE_NUMBER = "0136.4"
 MAIS_ADT = "141"
 MAIS_VAST = "20"
-PROXY_BASE = (
-    "https://collectieoverijssel.nl/wp-content/plugins/mais-mdws/maisi_ajax_proxy.php"
-)
 IMAGE_BASE = "https://preserve2.archieven.nl/mi-20/fonc-hco/0136.4"
 OUTPUT_DIR = Path("scans/overijssel")
 USER_AGENT = "memories-crawl/1.0"
 
-# Known minr values for each kantoor's Memories van Successie sub-item.
-# Values marked None need to be discovered (see TODO 1 above).
-# Minr values for the "Alfabetische Tafel / Klapper" sub-items are NOT listed here
-# because we only process MvS items.
-KANTOOR_MINR: dict[str, int | None] = {
+# minr values for each kantoor's "Memories van Successie" item in the MAIS tree.
+# These were discovered by browsing the collectieoverijssel.nl inv3 tree for
+# miadt=141, mivast=20, micode=0136.4 (verified April 2026).
+# The "Alfabetische Tafel / Klapper" sub-items are NOT listed here.
+KANTOOR_MINR: dict[str, int] = {
     "Almelo":     2227676,
-    "Deventer":   None,   # TODO: discover via browser
-    "Enschede":   None,
-    "Hardenberg": None,
-    "Kampen":     None,
-    "Oldenzaal":  None,
-    "Ommen":      None,
-    "Steenwijk":  None,
-    "Zwolle":     None,
-    "Overige":    None,
+    "Deventer":   2227950,
+    "Enschede":   2228207,
+    "Goor":       2228335,
+    "Kampen":     2228502,
+    "Ommen":      2228649,
+    "Raalte":     2228752,
+    "Steenwijk":  2228889,
+    "Vollenhove": 2228980,
+    "Zwolle":     2229046,
 }
+
+_INV3_URL = (
+    "https://collectieoverijssel.nl/collectie/archieven/"
+    "?mivast=20&mizig=210&miadt=141&miaet=1&micode=0136.4"
+    "&minr={minr}&milang=nl&miview=inv3"
+)
+
+# JS to collect all stk3 toggle-call argument strings from the inv3 DOM
+_JS_COLLECT_STK3 = """() => {
+    return Array.from(document.querySelectorAll('a[onclick*="stk3"]')).map(a => {
+        const oc = a.getAttribute('onclick');
+        const m = oc.match(/mi_inv3_toggle_stk\\((.+?)\\);\\s*return/s);
+        return m ? m[1] : null;
+    }).filter(Boolean);
+}"""
+
+# JS to harvest all preserve2 /fonc-hco/ thumbnail srcs currently in the DOM
+_JS_HARVEST_IMGS = """() => {
+    return Array.from(document.querySelectorAll('img[src*="/fonc-hco/"]')).map(i => i.src);
+}"""
+
+_SRC_RE = re.compile(
+    r"NL-ZlHCO_0136\.4_(\d+)_(\d+)\.jpg[^?]*\?"
+    r".*?miahd=(\d+).*?rdt=([^&]+).*?open=([^&\"']+)"
+)
+
+
+def _parse_thumb_src(src: str) -> dict | None:
+    m = _SRC_RE.search(src)
+    if not m:
+        return None
+    return {
+        "invnr": int(m.group(1)),
+        "page": int(m.group(2)),
+        "miahd": int(m.group(3)),
+        "rdt": m.group(4),
+        "open": m.group(5),
+    }
+
+
+def _fetch_page_tokens_via_playwright(minr: int) -> list[dict]:
+    """Return [{invnr, page, miahd, rdt, open}, ...] for every scan page under minr.
+
+    Launches a headless Chromium browser, navigates to the MAIS inv3 page for the
+    given kantoor minr, and iterates over all child item stk3 strips to extract
+    per-page auth tokens.
+
+    Requires: pip install playwright && playwright install chromium
+    """
+    from playwright.sync_api import sync_playwright  # noqa: PLC0415
+
+    # last-wins dedup: later stk3 calls give more-specific tokens than auto-load
+    pages_by_key: dict[tuple[int, int], dict] = {}
+
+    with sync_playwright() as pw:
+        browser = pw.chromium.launch(headless=True)
+        page = browser.new_page()
+        page.set_extra_http_headers({"User-Agent": USER_AGENT})
+
+        # Navigate to inv3 — JS fires prox.ashx automatically (mi_useprox.initial=true)
+        page.goto(_INV3_URL.format(minr=minr), wait_until="networkidle", timeout=60_000)
+        page.wait_for_timeout(3_000)
+
+        # Collect all stk3 argument strings from child item links
+        stk3_arg_list: list[str] = page.evaluate(_JS_COLLECT_STK3)
+        print(f"    found {len(stk3_arg_list)} stk3 items")
+
+        for idx, args in enumerate(stk3_arg_list):
+            # Trigger the stk3 strip for this item
+            page.evaluate(f"mi_inv3_toggle_stk({args})")
+            page.wait_for_timeout(1_500)
+
+            # Harvest all fonc-hco thumbnails now visible in the DOM
+            srcs: list[str] = page.evaluate(_JS_HARVEST_IMGS)
+            for src in srcs:
+                rec = _parse_thumb_src(src)
+                if rec:
+                    pages_by_key[(rec["invnr"], rec["page"])] = rec
+
+            if (idx + 1) % 25 == 0:
+                print(f"    processed {idx + 1}/{len(stk3_arg_list)} items, "
+                      f"{len(pages_by_key)} pages so far")
+
+        browser.close()
+
+    result = sorted(pages_by_key.values(), key=lambda r: (r["invnr"], r["page"]))
+    print(f"    total pages collected: {len(result)}")
+    return result
 
 
 def _image_url(invnr: int, page: int, miahd: int, rdt: str, open_token: str) -> str:
     filename = f"NL-ZlHCO_0136.4_{invnr}_{page:04d}.jpg"
     return (
-        f"{IMAGE_BASE}/{filename}"
+        f"{IMAGE_BASE}/{invnr}/{filename}"
         f"?miadt={MAIS_ADT}&miahd={miahd}&mivast={MAIS_VAST}&rdt={rdt}&open={open_token}"
     )
 
@@ -122,47 +193,43 @@ def _write_metadata(dest_dir: Path, kantoor: str, invnr: int, n_scans: int) -> N
         json.dump(meta, f, ensure_ascii=False, indent=2)
 
 
-def _fetch_page_tokens_via_playwright(minr: int) -> list[dict]:
-    """Return list of {invnr, page, miahd, rdt, open} dicts for all pages in minr.
-
-    Requires: pip install playwright && playwright install chromium
-    TODO: implement this function.
-    """
-    raise NotImplementedError(
-        "Token extraction via Playwright is not yet implemented.\n"
-        "See the module docstring for the approach."
-    )
-
-
 def main() -> None:
     session = requests.Session()
     session.headers["User-Agent"] = USER_AGENT
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
     for kantoor, minr in KANTOOR_MINR.items():
-        if minr is None:
-            print(f"  {kantoor}: minr unknown – skipped (see TODO 1 in overijssel.py)")
+        print(f"\n  {kantoor} (minr={minr}): fetching page tokens via Playwright …")
+        pages = _fetch_page_tokens_via_playwright(minr)
+
+        if not pages:
+            print(f"    WARNING: no pages found for {kantoor}")
             continue
 
-        print(f"  {kantoor} (minr={minr}): fetching page tokens …")
-        try:
-            pages = _fetch_page_tokens_via_playwright(minr)
-        except NotImplementedError as exc:
-            print(f"    SKIPPED – {exc}")
-            continue
-
-        print(f"    {len(pages)} pages found")
+        # Group by invnr to write per-invnr metadata
+        invnr_pages: dict[int, list[dict]] = {}
         for p in pages:
-            invnr = p["invnr"]
-            dest_dir = OUTPUT_DIR / kantoor / str(invnr)
-            dest = dest_dir / f"{p['page']:04d}.jpg"
-            url = _image_url(invnr, p["page"], p["miahd"], p["rdt"], p["open"])
-            status = _download_file(session, url, dest)
-            if status == "downloaded":
-                _write_metadata(dest_dir, kantoor, invnr, len(pages))
-            time.sleep(0.2)
+            invnr_pages.setdefault(p["invnr"], []).append(p)
 
-    print("Done (Overijssel – partially implemented).")
+        downloaded = skipped = missing = 0
+        for invnr, inv_pages in sorted(invnr_pages.items()):
+            dest_dir = OUTPUT_DIR / kantoor / str(invnr)
+            for p in inv_pages:
+                dest = dest_dir / f"{p['page']:04d}.jpg"
+                url = _image_url(invnr, p["page"], p["miahd"], p["rdt"], p["open"])
+                status = _download_file(session, url, dest)
+                if status == "downloaded":
+                    downloaded += 1
+                    _write_metadata(dest_dir, kantoor, invnr, len(inv_pages))
+                elif status == "exists":
+                    skipped += 1
+                else:
+                    missing += 1
+                time.sleep(0.15)
+
+        print(f"    {kantoor}: {downloaded} downloaded, {skipped} existing, {missing} missing")
+
+    print("\nDone (Overijssel).")
 
 
 if __name__ == "__main__":

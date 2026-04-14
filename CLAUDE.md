@@ -10,7 +10,7 @@ Downloads all surviving *Memories van Successie* (Dutch succession/inheritance r
 uv run python main.py openarchieven      # BHIC, Zeeuws Archief, HUA, Gelders, NHA
 uv run python main.py nationaalarchief   # Zuid-Holland (Nationaal Archief 3.06.05)
 uv run python main.py drentsarchief      # Drenthe (Memorix API)
-uv run python main.py overijssel         # ⚠️ INCOMPLETE – see below
+uv run python main.py overijssel         # Overijssel (HCO) – requires Playwright
 uv run python main.py all
 ```
 
@@ -24,7 +24,7 @@ uv run python main.py all
 | `python/step3_download_steps.py` | Open Archieven: download scans from `scan_urls.csv` |
 | `python/nationaalarchief.py` | Zuid-Holland: scrape viewer pages, download via UUID |
 | `python/drentsarchief.py` | Drenthe: Memorix REST API, deed→asset chain |
-| `python/overijssel.py` | Overijssel: **concept only**, see TODOs below |
+| `python/overijssel.py` | Overijssel: Playwright-based MAIS token extraction |
 
 ## Exclusion rule
 
@@ -32,69 +32,38 @@ uv run python main.py all
 
 ---
 
-## ⚠️ Overijssel – TODO list
+## Overijssel (HCO) – MAIS token extraction
 
-The Historisch Centrum Overijssel (HCO) uses a MAIS Internet viewer system. Scans are at:
+First-time setup: `uv sync && playwright install chromium`
 
+The HCO uses a MAIS Internet viewer. Each scan page requires unique per-page tokens
+(`miahd`, `rdt`, `open`). The implementation in `python/overijssel.py`:
+
+1. Opens the MAIS inv3 page in headless Chromium to establish the session.
+2. Clicks each invnr-item stk3 link via `mi_inv3_toggle_stk(...)`.
+3. Harvests `img[src*="/fonc-hco/"]` from the DOM to get per-page tokens.
+
+**Image URL format:**
 ```
-https://preserve2.archieven.nl/mi-20/fonc-hco/0136.4/
+https://preserve2.archieven.nl/mi-20/fonc-hco/0136.4/{invnr}/
     NL-ZlHCO_0136.4_{invnr}_{page:04d}.jpg
     ?miadt=141&miahd={miahd}&mivast=20&rdt={rdt}&open={token}
 ```
 
-**Without the tokens you get HTTP 202 + an SVG placeholder — not the real image.**
+**Kantoor minr values** (verified April 2026):
 
-The tokens are injected by the MAIS JavaScript viewer (viewer3.js from srv.archieven.nl). Fetching the stk3 endpoint with plain `requests` always returns an empty `<div>`.
-
-### TODO 1 – Find minr values for all 10 kantoren
-
-In `python/overijssel.py`, the dict `KANTOOR_MINR` maps kantoor name → `minr` (MAIS item ID for the "Memories van Successie" sub-item of that kantoor). Only Almelo is filled in:
-
-```python
-KANTOOR_MINR = {
-    "Almelo":     2227676,   # confirmed
-    "Deventer":   None,      # need to discover
-    "Enschede":   None,
-    ...
-}
-```
-
-**How to find them**: Navigate to the collectieoverijssel.nl viewer for access code `0136.4` (`miadt=141, mivast=20`), open the tree, and read the `minr=...` parameter from the link for each kantoor's "Memories van Successie" item (not the "Alfabetische Tafel/Klapper" items).
-
-Direct viewer URL pattern:
-```
-https://collectieoverijssel.nl/wp-content/plugins/mais-mdws/maisi_ajax_proxy.php
-  ?mivast=20&mizig=210&miadt=141&miaet=1&micode=0136.4&minr={MINR}&milang=nl&miview=viewer
-```
-
-### TODO 2 – Implement `_fetch_page_tokens_via_playwright(minr)`
-
-This function in `python/overijssel.py` needs to:
-
-1. Launch a browser (Playwright/Chromium) and navigate to the collectieoverijssel.nl viewer for the given `minr`.
-2. Wait for the stk3 thumbnail strip to fully render (all `<img>` tags loaded).
-3. Extract each `<img src="...">` and parse out `invnr`, `page`, `miahd`, `rdt`, `open` from the URL.
-4. Return a list of dicts with those fields.
-
-The stk3 URL that loads the thumbnails:
-```
-https://collectieoverijssel.nl/wp-content/plugins/mais-mdws/maisi_ajax_proxy.php
-  ?mivast=20&mizig=210&miadt=141&miaet=1&micode=0136.4&minr={minr}&milang=nl&miview=stk3
-```
-This must be fetched *from within* a browser session on collectieoverijssel.nl (requires `PHPSESSID` + `mi_sessid` cookies set by the viewer page).
-
-**Dependency to add** to `pyproject.toml`:
-```toml
-dependencies = [
-    "requests>=2.33.1",
-    "playwright>=1.40",   # add this
-]
-```
-And run `playwright install chromium` after installing.
-
-### TODO 3 – Verify page count per inventory item
-
-The known example (Kantoor Almelo) has 1372 pages. Other kantoren likely have different counts. The stk3 approach in TODO 2 will naturally give the correct count because it enumerates all thumbnail images. No separate page-count API call is needed.
+| Kantoor    | minr    |
+|------------|---------|
+| Almelo     | 2227676 |
+| Deventer   | 2227950 |
+| Enschede   | 2228207 |
+| Goor       | 2228335 |
+| Kampen     | 2228502 |
+| Ommen      | 2228649 |
+| Raalte     | 2228752 |
+| Steenwijk  | 2228889 |
+| Vollenhove | 2228980 |
+| Zwolle     | 2229046 |
 
 ---
 
