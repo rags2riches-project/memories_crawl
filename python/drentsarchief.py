@@ -61,15 +61,13 @@ def _collect_deed_ids(session: requests.Session) -> dict[str, dict]:
     total_pages = None
     while True:
         data = _search_page(session, page)
-        results = data.get("result") or data.get("results") or data.get("hits") or []
-        if isinstance(results, dict):
-            results = results.get("hits") or []
+        results = data.get("person", [])
         for person in results:
             deed_id = person.get("deed_id") or person.get("register_id")
             if deed_id and deed_id not in deeds:
                 deeds[deed_id] = person
         if total_pages is None:
-            total_pages = data.get("pages") or data.get("totalPages")
+            total_pages = data.get("metadata", {}).get("pagination", {}).get("pages")
         if total_pages and page >= int(total_pages):
             break
         if not results:
