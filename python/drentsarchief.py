@@ -89,7 +89,10 @@ def _fetch_deed(session: requests.Session, deed_id: str) -> dict:
         time.sleep(10)
         resp = session.get(resp.request.url, timeout=60)
     resp.raise_for_status()
-    return resp.json()
+    data = resp.json()
+    # API wraps the deed in {"deed": [...], "links": {...}}; unwrap the first element.
+    deeds = data.get("deed") or []
+    return deeds[0] if deeds else {}
 
 
 def _download_file(session: requests.Session, url: str, dest: Path) -> str:
@@ -119,6 +122,7 @@ def _write_metadata(dest_dir: Path, deed_data: dict, person_data: dict) -> None:
         "inventarisnummer": (
             deed_data.get("register", {}).get("inventarisnummer")
             or deed_data.get("inventarisnummer")
+            or deed_data.get("metadata", {}).get("register_naam")
             or person_data.get("register_naam", "")
         ),
         "naam_overledene": (
