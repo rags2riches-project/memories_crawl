@@ -79,6 +79,45 @@ _JS_COLLECT_STK3 = """() => {
     }).filter(Boolean);
 }"""
 
+# JS to snapshot which strip IDs are currently in mi_strip_store
+_JS_STRIP_IDS = "() => Object.keys(mi_strip_store || {})"
+
+# JS to force-load all chunks for a specific strip ID, returns total page count
+_JS_FORCE_LOAD_STRIP = """(stripId) => {
+    const r = (mi_strip_store || {})[stripId];
+    if (!r || !r.aantal) return 0;
+    const chunkSize = r.numloadScans || 25;
+    const totalChunks = Math.ceil(r.aantal / chunkSize);
+    for (let chunk = 0; chunk < totalChunks; chunk++) {
+        if (r.loadedChunks.indexOf(chunk) === -1) {
+            r.cursor = chunk * chunkSize + 1;
+            r.dir = -1;
+            r.populate();
+        }
+    }
+    return r.aantal;
+}"""
+
+# JS to check whether a specific strip has all scans rendered in the DOM.
+# loadedChunks is pushed immediately when fetch fires (not on response), so
+# we poll loadedScans instead, which is incremented by mi_strip_populate.
+_JS_STRIP_LOADED = """(stripId) => {
+    const r = (mi_strip_store || {})[stripId];
+    if (!r || !r.aantal) return true;
+    return (r.loadedScans || []).length >= r.aantal;
+}"""
+
+# JS to harvest fonc-hco thumbnail srcs from a single strip's slider element,
+# then remove the strip from the store and DOM to free memory.
+_JS_HARVEST_STRIP = """(stripId) => {
+    const r = (mi_strip_store || {})[stripId];
+    if (!r || !r.sslider) return [];
+    const srcs = Array.from(r.sslider.querySelectorAll('img[src*="/fonc-hco/"]')).map(i => i.src);
+    if (r.strip && r.strip.parentNode) r.strip.parentNode.removeChild(r.strip);
+    delete mi_strip_store[stripId];
+    return srcs;
+}"""
+
 # JS to harvest all preserve2 /fonc-hco/ thumbnail srcs currently in the DOM
 _JS_HARVEST_IMGS = """() => {
     return Array.from(document.querySelectorAll('img[src*="/fonc-hco/"]')).map(i => i.src);
@@ -168,12 +207,32 @@ def _fetch_page_tokens_via_playwright(minr: int) -> list[dict]:
         print(f"    found {len(stk3_arg_list)} stk3 items")
 
         for idx, args in enumerate(stk3_arg_list):
+            # Snapshot existing strip IDs so we can identify the new one below
+            before_ids: set[str] = set(page.evaluate(_JS_STRIP_IDS))
+
             # Trigger the stk3 strip for this item
             page.evaluate(f"mi_inv3_toggle_stk({args})")
             page.wait_for_timeout(1_500)
 
-            # Harvest all fonc-hco thumbnails now visible in the DOM
-            srcs: list[str] = page.evaluate(_JS_HARVEST_IMGS)
+            # Find the newly created strip (if any)
+            after_ids: set[str] = set(page.evaluate(_JS_STRIP_IDS))
+            new_ids = after_ids - before_ids
+
+            if new_ids:
+                strip_id = next(iter(new_ids))
+                # Force-load all chunks beyond the initial 25, then poll until done.
+                page.evaluate(_JS_FORCE_LOAD_STRIP, strip_id)
+                for _ in range(120):  # up to 60 s for very large invnrs
+                    if page.evaluate(_JS_STRIP_LOADED, strip_id):
+                        break
+                    page.wait_for_timeout(500)
+
+                # Harvest thumbnails from this strip only, then remove from store.
+                srcs: list[str] = page.evaluate(_JS_HARVEST_STRIP, strip_id)
+            else:
+                # No new strip — fall back to harvesting the full DOM (rare case)
+                srcs = page.evaluate(_JS_HARVEST_IMGS)
+
             for src in srcs:
                 rec = _parse_thumb_src(src)
                 if rec:
@@ -219,8 +278,7 @@ def _download_file(session: requests.Session, url: str, dest: Path) -> str:
 
 def _write_metadata(dest_dir: Path, kantoor: str, invnr: int, n_scans: int) -> None:
     sidecar = dest_dir / "metadata.json"
-    if sidecar.exists():
-        return
+    # Always rewrite: n_scans may have been wrong on a prior truncated run.
     meta = {
         "archief_naam": ARCHIVE_NAME,
         "archief_nummer": ARCHIVE_NUMBER,
@@ -255,13 +313,13 @@ def main() -> None:
         downloaded = skipped = missing = 0
         for invnr, inv_pages in sorted(invnr_pages.items()):
             dest_dir = OUTPUT_DIR / kantoor / str(invnr)
+            _write_metadata(dest_dir, kantoor, invnr, len(inv_pages))
             for p in inv_pages:
                 dest = dest_dir / f"{p['page']:04d}.jpg"
                 url = _image_url(invnr, p["page"], p["miahd"], p["rdt"], p["open"])
                 status = _download_file(session, url, dest)
                 if status == "downloaded":
                     downloaded += 1
-                    _write_metadata(dest_dir, kantoor, invnr, len(inv_pages))
                 elif status == "exists":
                     skipped += 1
                 else:
