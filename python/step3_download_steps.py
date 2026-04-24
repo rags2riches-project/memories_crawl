@@ -59,7 +59,7 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--input", default=DEFAULT_INPUT_FILE)
     parser.add_argument("--output-dir", default=DEFAULT_OUTPUT_DIR)
-    args = parser.parse_args()
+    args = parser.parse_args([])
 
     session = requests.Session()
     session.headers["User-Agent"] = USER_AGENT

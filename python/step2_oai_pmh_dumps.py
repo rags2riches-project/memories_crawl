@@ -181,7 +181,7 @@ def main(output_file: str = DEFAULT_OUTPUT_FILE) -> None:
     parser.add_argument("--dumps-dir", default="dumps")
     parser.add_argument("--limit-per-archive", type=int, default=0)
     parser.add_argument("--archives", nargs="+", choices=ARCHIVES)
-    args = parser.parse_args()
+    args = parser.parse_args([])
 
     session = requests.Session()
     session.headers["User-Agent"] = USER_AGENT
