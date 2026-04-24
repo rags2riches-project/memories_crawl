@@ -64,7 +64,7 @@ def _record_url(archive: str, record_id: str) -> str:
     return f"https://www.openarchieven.nl/{archive}:{record_id}" if record_id else ""
 
 
-def fetch_page(session: requests.Session, archive: str, offset: int) -> dict[str, Any]:
+def fetch_page(session: requests.Session, archive: str, offset: int, retries: int = 3) -> dict[str, Any]:
     params = {
         "archive": archive,
         "name": "*",
@@ -73,12 +73,29 @@ def fetch_page(session: requests.Session, archive: str, offset: int) -> dict[str
         "offset": offset,
         "format": "json",
     }
-    response = session.get(BASE_URL, params=params, timeout=60)
-    if response.status_code == 429:
-        time.sleep(5)
-        response = session.get(BASE_URL, params=params, timeout=60)
-    response.raise_for_status()
-    return response.json()
+    delay = 5
+    for attempt in range(retries):
+        try:
+            response = session.get(BASE_URL, params=params, timeout=60)
+        except requests.exceptions.ConnectionError as exc:
+            if attempt < retries - 1:
+                print(f"    connection error on attempt {attempt + 1}, retrying in {delay}s … ({exc})", flush=True)
+                time.sleep(delay)
+                delay *= 2
+                continue
+            raise
+        if response.status_code == 429:
+            time.sleep(delay)
+            delay *= 2
+            continue
+        if response.status_code in (502, 503, 504) and attempt < retries - 1:
+            print(f"    {response.status_code} on attempt {attempt + 1}, retrying in {delay}s …", flush=True)
+            time.sleep(delay)
+            delay *= 2
+            continue
+        response.raise_for_status()
+        return response.json()
+    raise RuntimeError(f"fetch_page failed after {retries} attempts for archive={archive} offset={offset}")
 
 
 def main(output_file: str = OUTPUT_FILE) -> None:
