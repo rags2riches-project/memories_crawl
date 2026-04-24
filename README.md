@@ -1,6 +1,6 @@
 # Memories van Successie – Download Pipeline
 
-Downloads all surviving *Memories van Successie* (Dutch succession/inheritance registers, 1806–1927) from eight regional Dutch archives and saves the scans with structured metadata.
+Downloads all surviving *Memories van Successie* (Dutch succession/inheritance registers, 1806–1927) from regional Dutch archives and saves the scans with structured metadata.
 
 ## What are Memories van Successie?
 
@@ -12,16 +12,20 @@ The registers are organised by fiscal district (*kantoor*) and contain individua
 
 ## Archive coverage
 
-| Province | Archive | System | Status |
-|---|---|---|---|
-| Noord-Brabant | BHIC | Open Archieven | ✅ |
-| Zeeland | Zeeuws Archief | Open Archieven | ✅ |
-| Utrecht | Het Utrechts Archief | Open Archieven | ✅ |
-| Gelderland | Gelders Archief | Open Archieven | ✅ |
-| Noord-Holland | Noord-Hollands Archief | Open Archieven | ✅ |
-| Zuid-Holland | Nationaal Archief | Custom scraper | ✅ |
-| Drenthe | Drents Archief | Memorix REST API | ✅ |
-| Overijssel | Historisch Centrum Overijssel | MAIS viewer + Playwright | ✅ |
+| Province | Archive | Code | System | Status |
+|---|---|---|---|---|
+| Noord-Brabant | BHIC | `bhi` | Open Archieven | ✅ verified |
+| Zeeland | Zeeuws Archief | `zar` | Open Archieven | ✅ verified |
+| Friesland | Tresoar | `frl` | Open Archieven | ✅ verified |
+| Limburg | RHCL | `rhl` | Open Archieven | ✅ verified |
+| Utrecht | Het Utrechts Archief | `hua` | Open Archieven | ✅ verified |
+| Gelderland | Gelders Archief | `gra` | Open Archieven | ✅ verified |
+| Noord-Holland | Noord-Hollands Archief | `nha` | Open Archieven | ✅ verified |
+| Zuid-Holland | Nationaal Archief | — | Custom scraper | ✅ verified |
+| Drenthe | Drents Archief | — | Memorix REST API | ✅ verified |
+| Overijssel | Historisch Centrum Overijssel | — | MAIS viewer + Playwright | ⚠️ needs browser install |
+
+**Overijssel note**: Playwright is installed but requires `uv run playwright install chromium` to download the matching Chromium browser before the pipeline can run.
 
 ---
 
@@ -34,7 +38,7 @@ The registers are organised by fiscal district (*kantoor*) and contain individua
 uv sync
 
 # First-time Overijssel setup (Playwright/Chromium)
-playwright install chromium
+uv run playwright install chromium
 
 # Download all archives (takes several hours)
 uv run python main.py all
@@ -50,11 +54,11 @@ uv run python main.py overijssel
 
 ## Pipelines in detail
 
-### Open Archieven (5 archives)
+### Open Archieven (7 archives)
 
 `uv run python main.py openarchieven`
 
-Covers: BHIC (Noord-Brabant), Zeeuws Archief, Het Utrechts Archief, Gelders Archief, Noord-Hollands Archief.
+Covers: BHIC (Noord-Brabant), Zeeuws Archief, Tresoar (Friesland), RHCL (Limburg), Het Utrechts Archief, Gelders Archief, Noord-Hollands Archief.
 
 **Three steps run in sequence:**
 
@@ -62,7 +66,7 @@ Covers: BHIC (Noord-Brabant), Zeeuws Archief, Het Utrechts Archief, Gelders Arch
    Queries the Open Archieven search API (`api.openarch.nl`) for each archive and collects all record GUIDs. Output: `records.csv`.
 
 2. **Step 2** (`python/step2_oai_pmh_dumps.py`)  
-   Downloads the full OAI-PMH XML export for each archive from `openarchieven.nl/exports/xml/`, parses the A2A records, filters to *Memories van Successie* only (excluding Tafel V-bis), and extracts scan URLs and metadata. Output: `scan_urls.csv`.
+   Downloads the full OAI-PMH XML export for each archive from `www.openarchieven.nl/exports/xml/` (hosted on S3), parses the A2A records, filters to *Memories van Successie* only (excluding Tafel V-bis), and extracts scan URLs and metadata. Output: `scan_urls.csv`. Dump files are cached in `dumps/` so reruns skip the download.
 
 3. **Step 3** (`python/step3_download_steps.py`)  
    Downloads every scan JPEG listed in `scan_urls.csv` and writes a `metadata.json` sidecar next to each group of scans. Output: `scans/openarchieven/{archive}/{record_id}/`.
@@ -75,7 +79,7 @@ Covers: BHIC (Noord-Brabant), Zeeuws Archief, Het Utrechts Archief, Gelders Arch
 Source file: `python/nationaalarchief.py`
 
 Access number **3.06.05**. The pipeline:
-1. Fetches the inventory listing page for section 2.4 (inventory numbers 2276–2357).
+1. Fetches the EAD XML inventory (`/download/xml`) and parses section 2.4 for Memories invnrs, excluding Tafel V-bis and Tafel VI. Falls back to a hardcoded range list if the download fails.
 2. For each inventory number, loads the viewer page and extracts scan UUIDs from the embedded `drupal-settings-json` data block.
 3. Downloads full-size scans from `service.archief.nl/api/file/v1/default/{UUID}`.
 
@@ -89,9 +93,9 @@ Output: `scans/nationaalarchief/{invnr}/`.
 `uv run python main.py drentsarchief`  
 Source file: `python/drentsarchief.py`
 
-Uses the **Memorix genealogy REST API** at `webservices.memorix.nl/genealogy`.
+Uses the **Memorix genealogy REST API** at `webservices.memorix.nl/genealogy` (~106,000 deeds total).
 
-1. Searches all persons with deed type `Successiememories` (paginated).
+1. Searches all persons with deed type `Successiememories` (paginated, 35,000+ pages).
 2. Collects unique deed IDs and fetches the deed detail for each.
 3. Downloads all `asset[].download` URLs (full-size JPEGs).
 
@@ -114,7 +118,9 @@ The pipeline uses **Playwright/Chromium** to drive a headless browser:
 3. Harvests per-page tokens from the rendered `<img src>` attributes.
 4. Downloads full-size scans using those tokens.
 
-**First-time setup**: run `playwright install chromium` after `uv sync`.
+Token results are cached per-kantoor in `scans/overijssel/tokens_minr_{minr}.json` so the Playwright pass does not need to repeat on reruns.
+
+**First-time setup**: run `uv run playwright install chromium` after `uv sync`.
 
 Covers all 10 kantoren: Almelo, Deventer, Enschede, Goor, Kampen, Ommen, Raalte, Steenwijk, Vollenhove, Zwolle.
 
@@ -130,6 +136,8 @@ scans/
 │   │   ├── 1.jpg
 │   │   └── 2.jpg …
 │   ├── zar/{record_id}/          ← Zeeland
+│   ├── frl/{record_id}/          ← Friesland (Tresoar)
+│   ├── rhl/{record_id}/          ← Limburg (RHCL)
 │   ├── hua/{record_id}/          ← Utrecht
 │   ├── gra/{record_id}/          ← Gelderland
 │   └── nha/{record_id}/          ← Noord-Holland
@@ -173,3 +181,4 @@ All pipelines are designed to be safely restarted:
 - **Open Archieven step 3**: skips files that already exist and have a non-zero size.
 - **Nationaal Archief**: tracks completed inventory numbers in `nationaalarchief_done.txt`.
 - **Drents Archief**: tracks completed deeds in `drentsarchief_deeds.csv` (rows with `status=done` are skipped).
+- **Overijssel**: token cache files (`tokens_minr_*.json`) skip the slow Playwright pass; already-downloaded images are skipped by file existence check.

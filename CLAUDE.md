@@ -67,6 +67,23 @@ https://preserve2.archieven.nl/mi-20/fonc-hco/0136.4/{invnr}/
 
 ---
 
+## Pipeline status (verified 2026-04-24)
+
+Each pipeline was live-tested against the real APIs and servers.
+
+| Pipeline | API/Server | End-to-end | Notes |
+|---|---|---|---|
+| **nationaalarchief** | ✅ | ✅ | 70 scans downloaded from invnr 2276 in 60s (174 MB). EAD XML parses correctly, drupal-settings-json extraction works, `service.archief.nl` download works. |
+| **drentsarchief** | ✅ | ⚠️ slow start | API returns ~106k deeds. Pipeline must paginate ~1064 pages to collect all deed IDs **before** any download begins (~5 min). Once collection finishes, downloads work (8.3 MB/scan tested). |
+| **openarchieven** | ✅ | ⚠️ slow start | All 7 archive dump URLs resolve on S3. Step 1 paginates millions of records (546k for BHI alone) before step 2 can begin. Expect hours before first scan file. |
+| **overijssel** | ✅ | ⚠️ slow first run | Playwright + Chromium work. Almelo has 256 stk3 items → ~1825 pages of tokens; collecting tokens takes ~6 min per kantoor. Token results are cached in `scans/overijssel/tokens_minr_{minr}.json` — reruns skip Playwright entirely. |
+
+**Setup reminder**: Chromium must be installed with `uv run playwright install chromium` (not bare `playwright install chromium`).
+
+**Open Archieven archive codes**: bhi (BHIC/Noord-Brabant), zar (Zeeuws Archief), frl (Tresoar/Friesland), rhl (RHCL/Limburg), hua (Het Utrechts Archief), gra (Gelders Archief), nha (Noord-Hollands Archief).
+
+---
+
 ## Technical notes
 
 ### Open Archieven (step2) filter logic
