@@ -208,19 +208,28 @@ def _extract_scans_from_viewer(html: str) -> list[dict]:
     return scans if isinstance(scans, list) else []
 
 
-def _download_file(session: requests.Session, url: str, dest: Path) -> str:
+def _download_file(session: requests.Session, url: str, dest: Path, retries: int = 3) -> str:
     if dest.exists() and dest.stat().st_size > 0:
         return "exists"
-    resp = session.get(url, stream=True, timeout=120)
-    if resp.status_code == 404:
-        return "missing"
-    resp.raise_for_status()
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    with open(dest, "wb") as f:
-        for chunk in resp.iter_content(65536):
-            if chunk:
-                f.write(chunk)
-    return "downloaded"
+    delay = 5
+    for attempt in range(retries):
+        resp = session.get(url, stream=True, timeout=120)
+        if resp.status_code == 404:
+            return "missing"
+        if resp.status_code in (502, 503, 504) and attempt < retries - 1:
+            print(f"    {resp.status_code} on attempt {attempt + 1}, retrying in {delay}s …", flush=True)
+            time.sleep(delay)
+            delay *= 2
+            continue
+        resp.raise_for_status()
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        with open(dest, "wb") as f:
+            for chunk in resp.iter_content(65536):
+                if chunk:
+                    f.write(chunk)
+        return "downloaded"
+    print(f"    skipping {url} after {retries} failed attempts", flush=True)
+    return "failed"
 
 
 def _write_metadata(dest_dir: Path, invnr: int, html: str, scans: list[dict]) -> None:
