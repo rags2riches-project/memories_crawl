@@ -155,11 +155,13 @@ def _fetch_page_tokens_via_playwright(minr: int) -> list[dict]:
     with sync_playwright() as pw:
         browser = pw.chromium.launch(headless=True)
         page = browser.new_page()
-        page.set_extra_http_headers({"User-Agent": USER_AGENT})
+        # Do NOT override User-Agent: the MAIS proxy returns no content for non-browser UAs.
 
-        # Navigate to inv3 — JS fires prox.ashx automatically (mi_useprox.initial=true)
+        # Navigate to inv3 — MAIS fires an AJAX call via mi_useprox to populate items.
+        # Wait for networkidle so scripts and the initial proxy AJAX both complete, then
+        # confirm the stk3 links are actually in the DOM before proceeding.
         page.goto(_INV3_URL.format(minr=minr), wait_until="networkidle", timeout=60_000)
-        page.wait_for_timeout(3_000)
+        page.wait_for_selector('a[onclick*="stk3"]', state="attached", timeout=30_000)
 
         # Collect all stk3 argument strings from child item links
         stk3_arg_list: list[str] = page.evaluate(_JS_COLLECT_STK3)
