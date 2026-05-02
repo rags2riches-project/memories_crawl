@@ -4,6 +4,7 @@ import argparse
 import codecs
 import csv
 import gzip
+import json
 import os
 import re
 import xml.etree.ElementTree as ET
@@ -16,8 +17,10 @@ import requests
 ARCHIVES = ["bhi", "zar", "frl", "rhl", "hua", "gra", "nha"]
 BASE_EXPORT_URL = "https://www.openarchieven.nl/exports/"
 DEFAULT_OUTPUT_FILE = "scan_urls.csv"
+CHECKPOINT_FILE = "step2_checkpoint.json"
 SOURCETYPE = "Memories van Successie"
 USER_AGENT = os.getenv("OPENARCH_USER_AGENT", "memories-crawl/1.0")
+PROGRESS_LOG_INTERVAL = 1000  # Log every N records processed
 NS = {
     "oai": "http://www.openarchives.org/OAI/2.0/",
     "a2a": "http://Mindbus.nl/A2A",
@@ -175,6 +178,23 @@ METADATA_COLS = [
 ]
 
 
+def _load_checkpoint() -> dict | None:
+    """Load checkpoint if it exists."""
+    if Path(CHECKPOINT_FILE).exists():
+        try:
+            with open(CHECKPOINT_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except (json.JSONDecodeError, IOError):
+            pass
+    return None
+
+
+def _save_checkpoint(data: dict) -> None:
+    """Save checkpoint to disk for resumability."""
+    with open(CHECKPOINT_FILE, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+
+
 def main(output_file: str = DEFAULT_OUTPUT_FILE) -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--output", default=output_file)
@@ -189,16 +209,49 @@ def main(output_file: str = DEFAULT_OUTPUT_FILE) -> None:
     dumps_dir = Path(args.dumps_dir)
     dumps_dir.mkdir(parents=True, exist_ok=True)
 
+    # Try to load checkpoint
+    checkpoint = _load_checkpoint()
+    start_archive_idx = 0
+    if checkpoint:
+        try:
+            start_archive_idx = ARCHIVES.index(checkpoint.get("last_archive", ""))
+            if checkpoint.get("completed", False):
+                start_archive_idx = 0  # All done, start fresh
+            else:
+                print(f"  Resuming from checkpoint: archive={checkpoint.get('last_archive')}")
+        except ValueError:
+            start_archive_idx = 0
+
     with open(args.output, "w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
         writer.writerow(["archive", "record_id", "page_seq", "scan_uri"] + METADATA_COLS)
         archives = args.archives or ARCHIVES
-        for archive in archives:
+        
+        start_time = __import__("time").time()
+        total_records = 0
+        total_scans = 0
+
+        for archive_idx, archive in enumerate(archives[start_archive_idx:], start=start_archive_idx):
             dump_path = dumps_dir / f"{archive}.xml.gz"
             if not dump_path.exists():
+                print(f"  Downloading dump for {archive}...")
                 _download(_archive_dump_url(session, archive), dump_path, session)
+            
+            # Get file size for progress reporting
+            try:
+                file_size = dump_path.stat().st_size
+            except OSError:
+                file_size = 0
+            
+            print(f"  Parsing {archive}.xml.gz ({file_size / 1024 / 1024:.1f} MB)...")
+            
+            archive_start = __import__("time").time()
             count = 0
+            records_processed = 0
+            scans_in_archive = 0
+
             for record in _iter_a2a_records(dump_path):
+                records_processed += 1
                 source_type = _find_first_text(record, [".//{*}SourceType", ".//{*}sourceType"])
                 if SOURCETYPE.lower() not in source_type.lower():
                     continue
@@ -213,9 +266,39 @@ def main(output_file: str = DEFAULT_OUTPUT_FILE) -> None:
                 meta_values = [meta.get(col, "") for col in METADATA_COLS]
                 for idx, uri in enumerate(uris, start=1):
                     writer.writerow([archive, identifier, idx, uri] + meta_values)
+                    scans_in_archive += 1
                 count += 1
+                total_records += 1
+
+                # Progress logging
+                if count % PROGRESS_LOG_INTERVAL == 0:
+                    elapsed = __import__("time").time() - start_time
+                    rate = total_records / elapsed if elapsed > 0 else 0
+                    print(
+                        f"    {archive}: records={count} scans={scans_in_archive} "
+                        f"| total={total_records} | {rate:.1f} rec/s",
+                        flush=True,
+                    )
+
                 if args.limit_per_archive and count >= args.limit_per_archive:
                     break
+
+            # Save checkpoint after each archive
+            _save_checkpoint({
+                "last_archive": archive,
+                "last_offset": 0,
+                "total_records": total_records,
+                "completed": False,
+            })
+
+            elapsed = __import__("time").time() - archive_start
+            rate = count / elapsed if elapsed > 0 else 0
+            print(f"  {archive} complete: {count} records, {scans_in_archive} scans in {elapsed:.1f}s ({rate:.1f} rec/s)")
+
+    # Clear checkpoint on success
+    if Path(CHECKPOINT_FILE).exists():
+        Path(CHECKPOINT_FILE).unlink()
+    print(f"  Step 2 complete: {total_records} records extracted, {total_scans} scan URLs written")
 
 
 if __name__ == "__main__":

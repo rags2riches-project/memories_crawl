@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import json
 import os
 import time
 from pathlib import Path
@@ -12,8 +13,10 @@ ARCHIVES = ["bhi", "zar", "frl", "rhl", "hua", "gra", "nha"]
 BASE_URL = "https://api.openarch.nl/1.1/records/search.php"
 PAGE_SIZE = 100
 OUTPUT_FILE = "records.csv"
+CHECKPOINT_FILE = "step1_checkpoint.json"
 SOURCETYPE = "Memories van Successie"
 USER_AGENT = os.getenv("OPENARCH_USER_AGENT", "memories-crawl/1.0")
+PROGRESS_LOG_INTERVAL = 100  # Log every N records
 
 
 def _docs(payload: dict[str, Any]) -> list[dict[str, Any]]:
@@ -98,23 +101,60 @@ def fetch_page(session: requests.Session, archive: str, offset: int, retries: in
     raise RuntimeError(f"fetch_page failed after {retries} attempts for archive={archive} offset={offset}")
 
 
+def _load_checkpoint() -> dict[str, Any] | None:
+    """Load checkpoint if it exists and matches current configuration."""
+    if Path(CHECKPOINT_FILE).exists():
+        try:
+            with open(CHECKPOINT_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except (json.JSONDecodeError, IOError):
+            pass
+    return None
+
+
+def _save_checkpoint(data: dict[str, Any]) -> None:
+    """Save checkpoint to disk for resumability."""
+    with open(CHECKPOINT_FILE, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+
+
 def main(output_file: str = OUTPUT_FILE) -> None:
     session = requests.Session()
     session.headers["User-Agent"] = USER_AGENT
 
+    # Try to load checkpoint
+    checkpoint = _load_checkpoint()
+    start_archive_idx = 0
+    start_offset = 0
     seen: set[tuple[str, str]] = set()
+
     Path(output_file).parent.mkdir(parents=True, exist_ok=True)
     with open(output_file, "w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
         writer.writerow(["archive", "record_id", "url"])
 
-        for archive in ARCHIVES:
-            offset = 0
+        start_time = time.time()
+        total_records = 0
+
+        if checkpoint:
+            print(f"  Resuming from checkpoint: archive={checkpoint.get('last_archive')}, offset={checkpoint.get('last_offset')}")
+            # Find starting archive index
+            try:
+                start_archive_idx = ARCHIVES.index(checkpoint.get("last_archive", ""))
+            except ValueError:
+                start_archive_idx = 0
+            start_offset = checkpoint.get("last_offset", 0)
+            seen = set((tuple(x) for x in checkpoint.get("seen", [])))
+
+        for archive_idx, archive in enumerate(ARCHIVES[start_archive_idx:], start=start_archive_idx):
+            offset = start_offset if archive_idx == start_archive_idx else 0
+
             while True:
                 payload = fetch_page(session, archive, offset)
                 docs = _docs(payload)
                 if not docs:
                     break
+
                 for record in docs:
                     record_id = _record_id(record)
                     if not record_id:
@@ -124,12 +164,41 @@ def main(output_file: str = OUTPUT_FILE) -> None:
                         continue
                     seen.add(key)
                     writer.writerow([archive, record_id, _record_url(archive, record_id)])
+                    total_records += 1
+
+                # Progress logging
                 total = _get_total(payload)
                 offset += len(docs)
+
+                elapsed = time.time() - start_time
+                rate = offset / elapsed if elapsed > 0 else 0  # Use offset for API rate
+                progress_pct = (offset / total * 100) if total else 0
+                print(
+                    f"  {archive}: offset={offset}/{total or '?'} ({progress_pct:.1f}%) "
+                    f"| unique_records={total_records} api_calls={offset // PAGE_SIZE} "
+                    f"| {rate:.1f} pages/s",
+                    flush=True,
+                )
+
+                # Save checkpoint periodically
+                if total_records % PROGRESS_LOG_INTERVAL == 0:
+                    _save_checkpoint({
+                        "last_archive": archive,
+                        "last_offset": offset,
+                        "seen": [list(k) for k in seen],
+                        "total_records": total_records,
+                        "start_time": start_time,
+                    })
+
                 if total is not None and offset >= total:
                     break
                 time.sleep(0.5)
             time.sleep(1.5)
+
+    # Clear checkpoint on success
+    if Path(CHECKPOINT_FILE).exists():
+        Path(CHECKPOINT_FILE).unlink()
+    print(f"  Step 1 complete: {total_records} records collected from {len(ARCHIVES)} archives")
 
 
 if __name__ == "__main__":
