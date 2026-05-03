@@ -11,6 +11,7 @@ uv run python main.py openarchieven      # BHIC, Zeeuws Archief, HUA, Gelders, N
 uv run python main.py nationaalarchief   # Zuid-Holland (Nationaal Archief 3.06.05)
 uv run python main.py drentsarchief      # Drenthe (Memorix API)
 uv run python main.py overijssel         # Overijssel (HCO) – requires Playwright
+uv run python main.py utrechtsarchief    # Utrecht (Het Utrechts Archief) – requires Playwright
 uv run python main.py all
 ```
 
@@ -25,6 +26,7 @@ uv run python main.py all
 | `python/nationaalarchief.py` | Zuid-Holland: scrape viewer pages, download via UUID |
 | `python/drentsarchief.py` | Drenthe: Memorix REST API, deed→asset chain |
 | `python/overijssel.py` | Overijssel: Playwright-based MAIS token extraction |
+| `python/utrechtsarchief.py` | Utrecht: Playwright-based MAIS ldt view token/scraping |
 
 ## Exclusion rule
 
@@ -77,6 +79,7 @@ Each pipeline was live-tested against the real APIs and servers.
 | **drentsarchief** | ✅ | ⚠️ slow start | API returns ~106k deeds. Pipeline must paginate ~1064 pages to collect all deed IDs **before** any download begins (~5 min). Once collection finishes, downloads work (8.3 MB/scan tested). |
 | **openarchieven** | ✅ | ⚠️ slow start | All 7 archive dump URLs resolve on S3. Step 1 paginates millions of records (546k for BHI alone) before step 2 can begin. Expect hours before first scan file. |
 | **overijssel** | ✅ | ⚠️ slow first run | Playwright + Chromium work. Almelo has 256 stk3 items → ~1825 pages of tokens; collecting tokens takes ~6 min per kantoor. Token results are cached in `scans/overijssel/tokens_minr_{minr}.json` — reruns skip Playwright entirely. |
+| **utrechtsarchief** | ✅ | ✅ | ldt view strip extraction works. 300 per-inventarisnummer pages collected and downloadable. 11 kantoren configured. |
 
 **Setup reminder**: Chromium must be installed with `uv run playwright install chromium` (not bare `playwright install chromium`).
 

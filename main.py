@@ -2,11 +2,12 @@
 
 Usage
 ─────
-    uv run python main.py openarchieven     # 5 archives via Open Archieven (step 1–3)
-    uv run python main.py nationaalarchief  # Zuid-Holland (Nationaal Archief)
-    uv run python main.py drentsarchief     # Drenthe (Memorix API)
-    uv run python main.py overijssel        # Overijssel – INCOMPLETE, see python/overijssel.py
-    uv run python main.py all               # Run all pipelines
+    uv run python main.py openarchieven      # 5 archives via Open Archieven (step 1–3)
+    uv run python main.py nationaalarchief   # Zuid-Holland (Nationaal Archief)
+    uv run python main.py drentsarchief      # Drenthe (Memorix API)
+    uv run python main.py overijssel         # Overijssel – INCOMPLETE, see python/overijssel.py
+    uv run python main.py utrechtsarchief    # Utrecht (Het Utrechts Archief)
+    uv run python main.py all                # Run all pipelines
 """
 from __future__ import annotations
 
@@ -48,11 +49,18 @@ def _run_overijssel() -> None:
     run()
 
 
+def _run_utrechtsarchief() -> None:
+    print("=== Utrechts Archief pipeline ===")
+    from python.utrechtsarchief import main as run
+    run()
+
+
 PIPELINES = {
-    "openarchieven":   _run_openarchieven,
+    "openarchieven":    _run_openarchieven,
     "nationaalarchief": _run_nationaalarchief,
-    "drentsarchief":   _run_drentsarchief,
-    "overijssel":      _run_overijssel,
+    "drentsarchief":    _run_drentsarchief,
+    "overijssel":       _run_overijssel,
+    "utrechtsarchief":  _run_utrechtsarchief,
 }
 
 

@@ -12,20 +12,22 @@ The registers are organised by fiscal district (*kantoor*) and contain individua
 
 ## Archive coverage
 
-| Province | Archive | Code | System | Status |
-|---|---|---|---|---|
-| Noord-Brabant | BHIC | `bhi` | Open Archieven | ✅ verified |
-| Zeeland | Zeeuws Archief | `zar` | Open Archieven | ✅ verified |
-| Friesland | Tresoar | `frl` | Open Archieven | ✅ verified |
-| Limburg | RHCL | `rhl` | Open Archieven | ✅ verified |
-| Utrecht | Het Utrechts Archief | `hua` | Open Archieven | ✅ verified |
-| Gelderland | Gelders Archief | `gra` | Open Archieven | ✅ verified |
-| Noord-Holland | Noord-Hollands Archief | `nha` | Open Archieven | ✅ verified |
-| Zuid-Holland | Nationaal Archief | — | Custom scraper | ✅ verified |
-| Drenthe | Drents Archief | — | Memorix REST API | ✅ verified |
-| Overijssel | Historisch Centrum Overijssel | — | MAIS viewer + Playwright | ⚠️ needs browser install |
+| Province | Archive | Code | System | Scans on disk | Status |
+|---|---|---|---|---|---|---|
+| Noord-Brabant | BHIC | `bhi` | Open Archieven | 738 | ✅ |
+| Zeeland | Zeeuws Archief | `zar` | Open Archieven | 0 | ✅ pipeline runs, no records found |
+| Friesland | Tresoar | `frl` | Open Archieven | 155,205 | ✅ |
+| Limburg | RHCL | `rhl` | Open Archieven | 0 | ✅ pipeline runs, no records found |
+| Utrecht | Het Utrechts Archief | `hua` | MAIS viewer + Playwright | — | new (see note) |
+| Utrecht (Open Archieven) | Het Utrechts Archief | `hua` | Open Archieven | 0 | ✅ pipeline runs, no scans |
+| Gelderland | Gelders Archief | `gra` | Open Archieven | 178,462 | ✅ |
+| Noord-Holland | Noord-Hollands Archief | `nha` | Open Archieven | 0 | ✅ pipeline runs, no records found |
+| Zuid-Holland | Nationaal Archief | — | Custom scraper | 42 | ✅ |
+| Drenthe | Drents Archief | — | Memorix REST API | ~1,086 | ✅ |
+| Overijssel | Historisch Centrum Overijssel | — | MAIS viewer + Playwright | 10 | ✅ needs browser install |
+| Utrecht (direct) | Het Utrechts Archief | — | MAIS viewer + Playwright | — | ✅ needs browser install |
 
-**Overijssel note**: Playwright is installed but requires `uv run playwright install chromium` to download the matching Chromium browser before the pipeline can run.
+**Playwright note**: Both Overijssel and Utrecht pipelines require `uv run playwright install chromium` to download the matching Chromium browser before running.
 
 ---
 
@@ -182,3 +184,4 @@ All pipelines are designed to be safely restarted:
 - **Nationaal Archief**: tracks completed inventory numbers in `nationaalarchief_done.txt`.
 - **Drents Archief**: tracks completed deeds in `drentsarchief_deeds.csv` (rows with `status=done` are skipped).
 - **Overijssel**: token cache files (`tokens_minr_*.json`) skip the slow Playwright pass; already-downloaded images are skipped by file existence check.
+- **Utrechts Archief**: tracks completed inventarisnummers in `done_{kantoor}.txt` per kantoor.
