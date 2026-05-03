@@ -14,16 +14,15 @@ The registers are organised by fiscal district (*kantoor*) and contain individua
 
 | Province | Archive | Code | System | Scans on disk | Status |
 |---|---|---|---|---|---|
-| Noord-Brabant | BHIC | `bhi` | Open Archieven | 738 | ✅ |
-| Zeeland | Zeeuws Archief | `zar` | Open Archieven | 0 | ✅ pipeline runs, no records found |
+| Noord-Brabant | BHIC | `bhi` | Open Archieven | 738 | X |
+| Zeeland | Zeeuws Archief | `zar` | Open Archieven | 0 | X pipeline runs, no records found |
 | Friesland | Tresoar | `frl` | Open Archieven | 155,205 | ✅ |
-| Limburg | RHCL | `rhl` | Open Archieven | 0 | ✅ pipeline runs, no records found |
-| Utrecht | Het Utrechts Archief | `hua` | Open Archieven | 0 | ✅ pipeline runs, no scans |
+| Limburg | RHCL | `rhl` | Open Archieven | 0 | X pipeline runs, no records found |
 | Utrecht | Het Utrechts Archief | `337-*` | MAIS viewer + Playwright | — | ✅ needs browser install, 11 kantoren |
 | Gelderland | Gelders Archief | `gra` | Open Archieven | 178,462 | ✅ |
-| Noord-Holland | Noord-Hollands Archief | `nha` | Open Archieven | 0 | ✅ pipeline runs, no records found |
-| Zuid-Holland | Nationaal Archief | — | Custom scraper | 42 | ✅ |
-| Drenthe | Drents Archief | — | Memorix REST API | ~1,086 | ✅ |
+| Noord-Holland | Noord-Hollands Archief | `nha` | Open Archieven | 0 | X pipeline runs, no records found |
+| Zuid-Holland | Nationaal Archief | — | Custom scraper | 42 (test run) | ✅ |
+| Drenthe | Drents Archief | — | Memorix REST API | ~1,086 | Recheck |
 | Overijssel | Historisch Centrum Overijssel | — | MAIS viewer + Playwright | 10 | ✅ needs browser install |
 
 **Playwright note**: Both Overijssel and Utrecht (MAIS) pipelines require `uv run playwright install chromium` to download the matching Chromium browser before running.
