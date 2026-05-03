@@ -18,16 +18,15 @@ The registers are organised by fiscal district (*kantoor*) and contain individua
 | Zeeland | Zeeuws Archief | `zar` | Open Archieven | 0 | ✅ pipeline runs, no records found |
 | Friesland | Tresoar | `frl` | Open Archieven | 155,205 | ✅ |
 | Limburg | RHCL | `rhl` | Open Archieven | 0 | ✅ pipeline runs, no records found |
-| Utrecht | Het Utrechts Archief | `hua` | MAIS viewer + Playwright | — | new (see note) |
-| Utrecht (Open Archieven) | Het Utrechts Archief | `hua` | Open Archieven | 0 | ✅ pipeline runs, no scans |
+| Utrecht | Het Utrechts Archief | `hua` | Open Archieven | 0 | ✅ pipeline runs, no scans |
+| Utrecht | Het Utrechts Archief | `337-*` | MAIS viewer + Playwright | — | ✅ needs browser install, 11 kantoren |
 | Gelderland | Gelders Archief | `gra` | Open Archieven | 178,462 | ✅ |
 | Noord-Holland | Noord-Hollands Archief | `nha` | Open Archieven | 0 | ✅ pipeline runs, no records found |
 | Zuid-Holland | Nationaal Archief | — | Custom scraper | 42 | ✅ |
 | Drenthe | Drents Archief | — | Memorix REST API | ~1,086 | ✅ |
 | Overijssel | Historisch Centrum Overijssel | — | MAIS viewer + Playwright | 10 | ✅ needs browser install |
-| Utrecht (direct) | Het Utrechts Archief | — | MAIS viewer + Playwright | — | ✅ needs browser install |
 
-**Playwright note**: Both Overijssel and Utrecht pipelines require `uv run playwright install chromium` to download the matching Chromium browser before running.
+**Playwright note**: Both Overijssel and Utrecht (MAIS) pipelines require `uv run playwright install chromium` to download the matching Chromium browser before running.
 
 ---
 
@@ -50,6 +49,7 @@ uv run python main.py openarchieven
 uv run python main.py nationaalarchief
 uv run python main.py drentsarchief
 uv run python main.py overijssel
+uv run python main.py utrechtsarchief
 ```
 
 ---
@@ -128,6 +128,30 @@ Covers all 10 kantoren: Almelo, Deventer, Enschede, Goor, Kampen, Ommen, Raalte,
 
 ---
 
+### Utrechts Archief – Het Utrechts Archief (HUA)
+
+`uv run python main.py utrechtsarchief`  
+Source file: `python/utrechtsarchief.py`
+
+The HUA also uses a MAIS Internet viewer (`miadt=39`, `mivast=39`). The pipeline uses **Playwright/Chromium** with the same stk3 inline toggle approach as Overijssel:
+
+1. Navigates to the `inv2` inventory page for each kantoor's archive code, expands the tree to discover *Memories van Successie* subsection `minr` values.
+2. For each subsection, navigates to the `inv3` view in a single Playwright session.
+3. Calls `mi_inv3_toggle_stk()` for each inventarisnummer to expand the stk3 thumbnail strip inline.
+4. Harvests per-page tokens from the rendered `<img src>` attributes.
+5. Derives full-size URLs by stripping `?format=thumb` from the harvested thumbnail URLs.
+6. Downloads full-size PNG scans.
+
+Unlike Overijssel, each kantoor has a different archive code (`micode`, e.g. `337-2` for Amersfoort, `337-7` for Utrecht), and subsection minr values are discovered dynamically rather than being hardcoded.
+
+Token results are cached per subsection in `scans/utrechtsarchief/tokens_{micode}_{minr}.json`. Partial results are saved every 25 items for crash resilience. Already-downloaded inventarisnummers are tracked in `scans/utrechtsarchief/done_{kantoor}.txt`.
+
+**First-time setup**: run `uv run playwright install chromium` after `uv sync`.
+
+Covers all 11 kantoren: Amersfoort, Amerongen, Loenen, Maarssen, Montfoort, Rhenen, Utrecht, IJsselstein, Vianen, Woerden, Wijk bij Duurstede.
+
+---
+
 ## Output structure
 
 ```
@@ -150,6 +174,9 @@ scans/
 │   ├── metadata.json
 │   └── 0001.jpg …
 └── overijssel/{kantoor}/{invnr}/
+    ├── metadata.json
+    └── 0000.jpg …
+├── utrechtsarchief/{kantoor}/{invnr}/
     ├── metadata.json
     └── 0000.jpg …
 ```
@@ -184,4 +211,4 @@ All pipelines are designed to be safely restarted:
 - **Nationaal Archief**: tracks completed inventory numbers in `nationaalarchief_done.txt`.
 - **Drents Archief**: tracks completed deeds in `drentsarchief_deeds.csv` (rows with `status=done` are skipped).
 - **Overijssel**: token cache files (`tokens_minr_*.json`) skip the slow Playwright pass; already-downloaded images are skipped by file existence check.
-- **Utrechts Archief**: tracks completed inventarisnummers in `done_{kantoor}.txt` per kantoor.
+- **Utrechts Archief**: token cache files (`tokens_{micode}_{minr}.json`, with partial saves every 25 items for crash resilience) skip the slow Playwright pass; already-downloaded images are skipped by file existence check. Completed inventarisnummers are tracked in `done_{kantoor}.txt` per kantoor.
