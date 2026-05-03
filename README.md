@@ -13,7 +13,7 @@ The registers are organised by fiscal district (*kantoor*) and contain individua
 ## Archive coverage
 
 | Province | Archive | Code | System | Scans on disk | Status |
-|---|---|---|---|---|---|---|
+|---|---|---|---|---|---|
 | Noord-Brabant | BHIC | `bhi` | Open Archieven | 738 | ✅ |
 | Zeeland | Zeeuws Archief | `zar` | Open Archieven | 0 | ✅ pipeline runs, no records found |
 | Friesland | Tresoar | `frl` | Open Archieven | 155,205 | ✅ |
