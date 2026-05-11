@@ -13,6 +13,7 @@ uv run python main.py drentsarchief      # Drenthe (Memorix API)
 uv run python main.py bhic               # Noord-Brabant (BHIC Memorix API)
 uv run python main.py overijssel         # Overijssel (HCO) – requires Playwright
 uv run python main.py utrechtsarchief    # Utrecht (Het Utrechts Archief) – requires Playwright
+uv run python main.py limburg            # Limburg (RHCL, archieven.nl MAIS) – requires Playwright
 uv run python main.py all
 ```
 
@@ -29,6 +30,7 @@ uv run python main.py all
 | `python/bhic.py` | Noord-Brabant (BHIC): Memorix REST API, register→asset chain |
 | `python/overijssel.py` | Overijssel: Playwright-based MAIS token extraction |
 | `python/utrechtsarchief.py` | Utrecht: Playwright-based MAIS stk3 inline strip extraction |
+| `python/limburg.py` | Limburg (RHCL): Playwright on archieven.nl, strip Volgende-step |
 
 ## Exclusion rule
 
@@ -82,6 +84,7 @@ Each pipeline was live-tested against the real APIs and servers.
 | **openarchieven** | ✅ | ⚠️ slow start | All 7 archive dump URLs resolve on S3. Step 1 paginates millions of records (546k for BHI alone) before step 2 can begin. Expect hours before first scan file. |
 | **overijssel** | ✅ | ⚠️ slow first run | Playwright + Chromium work. Almelo has 256 stk3 items → ~1825 pages of tokens; collecting tokens takes ~6 min per kantoor. Token results are cached in `scans/overijssel/tokens_minr_{minr}.json` — reruns skip Playwright entirely. |
 | **utrechtsarchief** | ✅ | ⚠️ slow first run | Playwright + Chromium. Uses stk3 inline toggle (same approach as Overijssel). Amersfoort verified: 66,615 pages from 211 invnrs across 2 subsections (~12 min harvest). Token results cached per subsection — reruns skip Playwright. 11 kantoren configured. |
+| **limburg** | ✅ | ✅ verified | archieven.nl MAIS (miadt=38, mivast=0). Two codes: 07.D03 (1818-1900, 111 digitized of 1,314, ~104k scans, by place) and 07.D08 (1901-1927, 42 digitized of 460, ~7k scans, by kantoor). End-to-end smoke-tested: invnr 1 (Amby) → 527 pages; invnr 491 (Gennep) → 207 pages. Inventory + tokens cached per code/invnr; reruns skip Playwright. Image format is `format=large` PNG (714×1024); see module docstring for trade-off vs. IIPSrv full-res JP2 path. |
 
 **Setup reminder**: Chromium must be installed with `uv run playwright install chromium` (not bare `playwright install chromium`).
 
@@ -136,3 +139,49 @@ indexed at BHIC, but `_is_tafel()` filters defensively just in case.
 **Important**: BHIC is also covered by the Open Archieven pipeline (`bhi` code).
 The custom `bhic` pipeline is direct, faster on cold start, and adds a
 `deeds.json` sidecar per register with all per-akte / per-overledene info.
+
+### Limburg (RHCL) – archieven.nl MAIS
+
+Two archive codes hold all Memories van Successie at RHCL:
+
+| Code   | Period         | Total invnrs | Digitized | Organised by |
+|--------|----------------|--------------|-----------|--------------|
+| 07.D03 | 1818-1900 (1905) | 1,314      | 111       | Plaats (place of death) |
+| 07.D08 | 1901-1927      | 460          | 42        | Kantoor      |
+
+07.D08 also contains a sibling section "Tafels 5bis" (minr 1014481) which is
+**excluded** per the project-wide Tafel V-bis rule. The scraper drills into
+07.D08's MvS-only sub-section (parent minr 1014062), so the tafel branch is
+never visited.
+
+```
+inv2 root:      https://www.archieven.nl/nl/zoeken
+                  ?mivast=0&mizig=210&miadt=38&micode={code}&miview=inv2
+per-invnr page: …same…&minr={minr}  (strip auto-loads)
+image URL:      https://preserve3.archieven.nl/mi-0/fonc-rhcl/{code}/{invnr}/
+                  NL-MtHCL_{code}_{invnr}_{page:04d}.jpg
+                  ?format=large&miadt=38&miahd={miahd}&mivast=0&rdt={rdt}&open={token}
+```
+
+Pagination quirks:
+- The root inv2 page renders only ~100 leaf nodes at a time, with a
+  ``Records N t/m M`` toggle per remaining batch driven by
+  ``mi_inv3_swapinv(...)``. The scraper clicks every batch in-page until none
+  remain.
+- The per-invnr strip exposes only 25 thumbnails initially; the rest are
+  loaded by clicking the ``.snext`` (Volgende) arrow. The scraper steps the
+  arrow until the ``.snavuit`` (disabled) class appears.
+
+Image format: ``format=large`` returns a 714×1024 PNG (~700 KB-1.2 MB per
+page). The archival 2090×3000 JPEG is only available via the IIPSrv zoomify
+tile server (``iipsrv12.fcgi?FIF=cache/fonc-rhcl/{hash}.jp2&CVT=jpeg``), but
+the ``{invnr,page} → JP2 hash`` map is only exposed inside each scan's
+embed-viewer HTML, so reaching full-res would require an extra viewer load
+per scan (~110 k loads). See module docstring for details.
+
+Caches:
+- ``scans/limburg/inventory_{code}.json``  – list of digitized invnrs
+- ``scans/limburg/tokens_{code}_{invnr}.json`` – per-page tokens for one register
+
+Both caches are sufficient for the download phase; rerunning skips Playwright
+entirely once they exist.

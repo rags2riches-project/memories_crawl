@@ -8,6 +8,7 @@ Usage
     uv run python main.py bhic               # Noord-Brabant (BHIC Memorix API)
     uv run python main.py overijssel         # Overijssel – INCOMPLETE, see python/overijssel.py
     uv run python main.py utrechtsarchief    # Utrecht (Het Utrechts Archief)
+    uv run python main.py limburg            # Limburg (RHCL, archieven.nl MAIS)
     uv run python main.py all                # Run all pipelines
 """
 from __future__ import annotations
@@ -62,6 +63,12 @@ def _run_utrechtsarchief() -> None:
     run()
 
 
+def _run_limburg() -> None:
+    print("=== Limburg pipeline (RHCL, archieven.nl MAIS) ===")
+    from python.limburg import main as run
+    run()
+
+
 PIPELINES = {
     "openarchieven":    _run_openarchieven,
     "nationaalarchief": _run_nationaalarchief,
@@ -69,6 +76,7 @@ PIPELINES = {
     "bhic":             _run_bhic,
     "overijssel":       _run_overijssel,
     "utrechtsarchief":  _run_utrechtsarchief,
+    "limburg":          _run_limburg,
 }
 
 
