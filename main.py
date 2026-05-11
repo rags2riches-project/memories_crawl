@@ -2,11 +2,11 @@
 
 Usage
 ─────
-    uv run python main.py openarchieven      # 5 archives via Open Archieven (step 1–3)
+    uv run python main.py openarchieven      # 2 archives via Open Archieven (step 1–3)
     uv run python main.py nationaalarchief   # Zuid-Holland (Nationaal Archief)
     uv run python main.py drentsarchief      # Drenthe (Memorix API)
     uv run python main.py bhic               # Noord-Brabant (BHIC Memorix API)
-    uv run python main.py overijssel         # Overijssel – INCOMPLETE, see python/overijssel.py
+    uv run python main.py overijssel         # Overijssel (HCO, MAIS + Playwright)
     uv run python main.py utrechtsarchief    # Utrecht (Het Utrechts Archief)
     uv run python main.py limburg            # Limburg (RHCL, archieven.nl MAIS)
     uv run python main.py noordholland       # Noord-Holland (Noord-Hollands Archief)
@@ -20,7 +20,7 @@ import sys
 
 
 def _run_openarchieven() -> None:
-    print("=== Open Archieven pipeline (bhi, zar, frl, rhl, hua, gra, nha) ===")
+    print("=== Open Archieven pipeline (frl, gra) ===")
 
     print("--- Step 1: collecting record GUIDs ---")
     from python.step1_collect_record_guids_from_search_api import main as step1

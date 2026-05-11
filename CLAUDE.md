@@ -7,7 +7,7 @@ Downloads all surviving *Memories van Successie* (Dutch succession/inheritance r
 ## How to run
 
 ```bash
-uv run python main.py openarchieven      # BHIC, Zeeuws Archief, HUA, Gelders, NHA
+uv run python main.py openarchieven      # Tresoar (Friesland), Gelders Archief
 uv run python main.py nationaalarchief   # Zuid-Holland (Nationaal Archief 3.06.05)
 uv run python main.py drentsarchief      # Drenthe (Memorix API)
 uv run python main.py bhic               # Noord-Brabant (BHIC Memorix API)
@@ -94,7 +94,7 @@ Each pipeline was live-tested against the real APIs and servers.
 
 **Setup reminder**: Chromium must be installed with `uv run playwright install chromium` (not bare `playwright install chromium`).
 
-**Open Archieven archive codes**: bhi (BHIC/Noord-Brabant), zar (Zeeuws Archief), frl (Tresoar/Friesland), rhl (RHCL/Limburg), hua (Het Utrechts Archief), gra (Gelders Archief), nha (Noord-Hollands Archief).
+**Open Archieven archive codes**: frl (Tresoar/Friesland), gra (Gelders Archief). The other five archives (BHIC, Zeeuws Archief, RHCL/Limburg, HUA/Utrecht, NHA/Noord-Holland) are now served by dedicated custom scrapers.
 
 ---
 
@@ -141,10 +141,6 @@ Full image:    asset[].download  (https://images.memorix.nl/bhic/download/fullsi
 1,896 registers total. Code prefixes are `036.03.01..19` (Memories van successie,
 kantoor X) plus `021.13` (Memories van successie Brabant). Tafel V-bis is not
 indexed at BHIC, but `_is_tafel()` filters defensively just in case.
-
-**Important**: BHIC is also covered by the Open Archieven pipeline (`bhi` code).
-The custom `bhic` pipeline is direct, faster on cold start, and adds a
-`deeds.json` sidecar per register with all per-akte / per-overledene info.
 
 ### Limburg (RHCL) – archieven.nl MAIS
 

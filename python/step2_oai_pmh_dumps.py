@@ -14,7 +14,7 @@ from urllib.parse import urljoin
 
 import requests
 
-ARCHIVES = ["bhi", "zar", "frl", "rhl", "hua", "gra", "nha"]
+ARCHIVES = ["frl", "gra"]
 BASE_EXPORT_URL = "https://www.openarchieven.nl/exports/"
 DEFAULT_OUTPUT_FILE = "scan_urls.csv"
 CHECKPOINT_FILE = "step2_checkpoint.json"

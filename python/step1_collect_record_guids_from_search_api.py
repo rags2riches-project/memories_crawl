@@ -9,7 +9,7 @@ from typing import Any
 
 import requests
 
-ARCHIVES = ["bhi", "zar", "frl", "rhl", "hua", "gra", "nha"]
+ARCHIVES = ["frl", "gra"]
 BASE_URL = "https://api.openarch.nl/1.1/records/search.php"
 PAGE_SIZE = 100
 OUTPUT_FILE = "records.csv"

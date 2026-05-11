@@ -12,19 +12,18 @@ The registers are organised by fiscal district (*kantoor*) and contain individua
 
 ## Archive coverage
 
-| Province | Archive | Code | System | Scans on disk | Status |
-|---|---|---|---|---|---|
-| Noord-Brabant | BHIC | `bhi` | Open Archieven | 738 | X |
-| Noord-Brabant | BHIC (custom) | — | Memorix REST API | — | ✅ direct pipeline, 1,896 registers |
-| Zeeland | Zeeuws Archief | `398` | MAIS viewer + Playwright | — | ✅ needs browser install |
-| Friesland | Tresoar | `frl` | Open Archieven | 155,205 | ✅ |
-| Limburg | RHCL | `rhl` | Open Archieven | 0 | X pipeline runs, no records found |
-| Utrecht | Het Utrechts Archief | `337-*` | MAIS viewer + Playwright | — | ✅ needs browser install, 11 kantoren |
-| Gelderland | Gelders Archief | `gra` | Open Archieven | 178,462 | ✅ |
-| Noord-Holland | Noord-Hollands Archief | `nha` | Open Archieven | 0 | X pipeline runs, no records found |
-| Zuid-Holland | Nationaal Archief | — | Custom scraper | 42 (test run) | ✅ |
-| Drenthe | Drents Archief | — | Memorix REST API | ~1,086 | Recheck |
-| Overijssel | Historisch Centrum Overijssel | — | MAIS viewer + Playwright | 10 | ✅ needs browser install |
+| Province | Archive | System | Scans on disk | Status |
+|---|---|---|---|---|
+| Friesland | Tresoar | Open Archieven | 155,205 | ✅ |
+| Gelderland | Gelders Archief | Open Archieven | 178,462 | ✅ |
+| Zuid-Holland | Nationaal Archief | Custom scraper | 42 (test run) | ✅ |
+| Drenthe | Drents Archief | Memorix REST API | ~1,086 | Recheck |
+| Noord-Brabant | BHIC | Memorix REST API | — | ✅ 1,896 registers |
+| Overijssel | Historisch Centrum Overijssel | MAIS + Playwright | 10 | ✅ |
+| Utrecht | Het Utrechts Archief | MAIS + Playwright | — | ✅ 11 kantoren |
+| Limburg | RHCL | MAIS + Playwright | — | ✅ |
+| Noord-Holland | Noord-Hollands Archief | MAIS + Playwright | — | ✅ |
+| Zeeland | Zeeuws Archief | MAIS + Playwright | — | ✅ |
 
 **Playwright note**: Overijssel, Utrecht, Limburg, Noord-Holland, and Zeeland (MAIS) pipelines require `uv run playwright install chromium` to download the matching Chromium browser before running.
 
@@ -60,11 +59,13 @@ uv run python main.py zeeland
 
 ## Pipelines in detail
 
-### Open Archieven (7 archives)
+### Open Archieven (2 archives)
 
 `uv run python main.py openarchieven`
 
-Covers: BHIC (Noord-Brabant), Zeeuws Archief, Tresoar (Friesland), RHCL (Limburg), Het Utrechts Archief, Gelders Archief, Noord-Hollands Archief.
+Covers: Tresoar (Friesland), Gelders Archief.
+
+The five archives that were previously also covered by this pipeline now use dedicated custom scrapers: BHIC (`bhic`), RHCL/Limburg (`limburg`), Het Utrechts Archief (`utrechtsarchief`), Noord-Hollands Archief (`noordholland`), and Zeeuws Archief (`zeeland`).
 
 **Three steps run in sequence:**
 
@@ -202,16 +203,11 @@ Token results are cached per kantoor in `scans/zeeland/tokens_minr_{minr}.json` 
 ```
 scans/
 ├── openarchieven/
-│   ├── bhi/{record_id}/          ← Noord-Brabant (BHIC)
+│   ├── frl/{record_id}/          ← Friesland (Tresoar)
 │   │   ├── metadata.json
 │   │   ├── 1.jpg
 │   │   └── 2.jpg …
-│   ├── zar/{record_id}/          ← Zeeland
-│   ├── frl/{record_id}/          ← Friesland (Tresoar)
-│   ├── rhl/{record_id}/          ← Limburg (RHCL)
-│   ├── hua/{record_id}/          ← Utrecht
-│   ├── gra/{record_id}/          ← Gelderland
-│   └── nha/{record_id}/          ← Noord-Holland
+│   └── gra/{record_id}/          ← Gelderland
 ├── nationaalarchief/{invnr}/
 │   ├── metadata.json
 │   └── NL-HaNA_3.06.05_{invnr}_*.jpg
