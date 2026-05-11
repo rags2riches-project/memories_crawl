@@ -17,7 +17,7 @@ The registers are organised by fiscal district (*kantoor*) and contain individua
 | Friesland | Tresoar | Open Archieven | 155,205 | ✅ |
 | Gelderland | Gelders Archief | Open Archieven | 178,462 | ✅ |
 | Zuid-Holland | Nationaal Archief | Custom scraper | 42 (test run) | ✅ |
-| Drenthe | Drents Archief | Memorix REST API | ~1,086 | Recheck |
+| Drenthe | Drents Archief | Memorix REST API | ~1,086 | ✅ |
 | Noord-Brabant | BHIC | Memorix REST API | — | ✅ 1,896 registers |
 | Overijssel | Historisch Centrum Overijssel | MAIS + Playwright | 10 | ✅ |
 | Utrecht | Het Utrechts Archief | MAIS + Playwright | — | ✅ 11 kantoren |
