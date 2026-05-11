@@ -12,22 +12,24 @@ The registers are organised by fiscal district (*kantoor*) and contain individua
 
 ## Archive coverage
 
-| Province | Archive | System | Scans on disk | Status |
-|---|---|---|---|---|
-| Friesland | Tresoar | Memorix REST API | — | ✅ 1,107 registers, ~238k persons |
-| Gelderland | Gelders Archief | MAIS + Playwright | — | ✅ 21 kantoren |
-| Zuid-Holland | Nationaal Archief | Custom scraper | 42 (test run) | ✅ |
-| Drenthe | Drents Archief | Memorix REST API | ~1,086 | ✅ |
-| Noord-Brabant | BHIC | Memorix REST API | — | ✅ 1,896 registers |
-| Overijssel | Historisch Centrum Overijssel | MAIS + Playwright | 10 | ✅ |
-| Utrecht | Het Utrechts Archief | MAIS + Playwright | — | ✅ 11 kantoren |
-| Limburg | RHCL | MAIS + Playwright | — | ✅ |
-| Noord-Holland | Noord-Hollands Archief | MAIS + Playwright | — | ✅ |
-| Zeeland | Zeeuws Archief | MAIS + Playwright | — | ✅ |
+| Province | Archive | System | Status |
+|---|---|---|---|
+| Friesland | Tresoar | Memorix REST API | ✅ 1,107 registers, ~238k persons |
+| Gelderland | Gelders Archief | MAIS + Playwright | ✅ 21 kantoren |
+| Zuid-Holland | Nationaal Archief | Custom scraper | ✅ |
+| Drenthe | Drents Archief | Memorix REST API | ✅ |
+| Noord-Brabant | BHIC | Memorix REST API | ✅ 1,896 registers |
+| Overijssel | Historisch Centrum Overijssel | MAIS + Playwright | ✅ 10 kantoren |
+| Utrecht | Het Utrechts Archief | MAIS + Playwright | ✅ 11 kantoren |
+| Limburg | RHCL | MAIS + Playwright | ✅ |
+| Noord-Holland | Noord-Hollands Archief | MAIS + Playwright | ✅ |
+| Zeeland | Zeeuws Archief | MAIS + Playwright | ✅ |
 
 **Playwright note**: Gelderland, Overijssel, Utrecht, Limburg, Noord-Holland, and Zeeland (MAIS) pipelines require `uv run playwright install chromium` to download the matching Chromium browser before running.
 
 ---
+
+New to this project? [GUIDE.md](GUIDE.md) explains what these scripts do, why they're needed, and how the archives work — in plain terms, no technical background assumed.
 
 ## Quick start
 
