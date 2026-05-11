@@ -14,6 +14,7 @@ uv run python main.py bhic               # Noord-Brabant (BHIC Memorix API)
 uv run python main.py overijssel         # Overijssel (HCO) – requires Playwright
 uv run python main.py utrechtsarchief    # Utrecht (Het Utrechts Archief) – requires Playwright
 uv run python main.py limburg            # Limburg (RHCL, archieven.nl MAIS) – requires Playwright
+uv run python main.py noordholland       # Noord-Holland (Noord-Hollands Archief) – requires Playwright
 uv run python main.py all
 ```
 
@@ -31,6 +32,7 @@ uv run python main.py all
 | `python/overijssel.py` | Overijssel: Playwright-based MAIS token extraction |
 | `python/utrechtsarchief.py` | Utrecht: Playwright-based MAIS stk3 inline strip extraction |
 | `python/limburg.py` | Limburg (RHCL): Playwright on archieven.nl, strip Volgende-step |
+| `python/noordholland.py` | Noord-Holland: Playwright-based MAIS stk3 inline strip extraction |
 
 ## Exclusion rule
 
@@ -85,6 +87,7 @@ Each pipeline was live-tested against the real APIs and servers.
 | **overijssel** | ✅ | ⚠️ slow first run | Playwright + Chromium work. Almelo has 256 stk3 items → ~1825 pages of tokens; collecting tokens takes ~6 min per kantoor. Token results are cached in `scans/overijssel/tokens_minr_{minr}.json` — reruns skip Playwright entirely. |
 | **utrechtsarchief** | ✅ | ⚠️ slow first run | Playwright + Chromium. Uses stk3 inline toggle (same approach as Overijssel). Amersfoort verified: 66,615 pages from 211 invnrs across 2 subsections (~12 min harvest). Token results cached per subsection — reruns skip Playwright. 11 kantoren configured. |
 | **limburg** | ✅ | ✅ verified | archieven.nl MAIS (miadt=38, mivast=0). Two codes: 07.D03 (1818-1900, 111 digitized of 1,314, ~104k scans, by place) and 07.D08 (1901-1927, 42 digitized of 460, ~7k scans, by kantoor). End-to-end smoke-tested: invnr 1 (Amby) → 527 pages; invnr 491 (Gennep) → 207 pages. Inventory + tokens cached per code/invnr; reruns skip Playwright. Image format is `format=large` PNG (714×1024); see module docstring for trade-off vs. IIPSrv full-res JP2 path. |
+| **noordholland** | ✅ | ⚠️ not yet tested | noord-hollandsarchief.nl MAIS (miadt=236, mivast=236, micode=178). Uses stk3 inline toggle (same approach as Overijssel/Utrecht). Kantoor sections discovered dynamically from inv2 tree. Tokens cached per section minr; reruns skip Playwright. Image server: preserve-nha.archieven.nl/mi-0/fonc-nha/178/. |
 
 **Setup reminder**: Chromium must be installed with `uv run playwright install chromium` (not bare `playwright install chromium`).
 
@@ -185,3 +188,31 @@ Caches:
 
 Both caches are sufficient for the download phase; rerunning skips Playwright
 entirely once they exist.
+
+### Noord-Holland (NHA) – noord-hollandsarchief.nl MAIS
+
+Archive 178 holds all *Memories van Successie* for the province of Noord-Holland.
+The inventory is organized by kantoor (tax office), discovered dynamically from
+the inv2 tree via Playwright.
+
+**Approach**: Same stk3 inline toggle pattern as Overijssel and Utrecht.
+
+```
+inv2 root:      https://noord-hollandsarchief.nl/bronnen/archieven
+                  ?mivast=236&mizig=210&miadt=236&micode=178&miview=inv2
+inv3 (kantoor): …same…&miaet=1&micode=178&minr={minr}&milang=nl&miview=inv3
+image URL:      https://preserve-nha.archieven.nl/mi-0/fonc-nha/178/{invnr}/
+                  NL-HlmNHA_178_{invnr}_{page:04d}.jpg
+                  ?miadt=236&miahd={miahd}&mivast=0&rdt={rdt}&open={token}
+```
+
+**Image format**: Remove `?format=thumb` from thumbnail URLs to get full-size.
+Note that the preserve URL uses `mivast=0` (not 236), same pattern as Limburg.
+
+**Caches**:
+- ``scans/noordholland/sections.json`` – discovered kantoor sections
+- ``scans/noordholland/tokens_{minr}.json`` – per-page tokens for one kantoor section
+- ``scans/noordholland/tokens_{minr}_partial.json`` – incremental save (crash-resilient)
+
+**Resume**: ``scans/noordholland/done.txt`` tracks completed kantoor sections.
+Partial token caches allow resuming interrupted harvest runs.
