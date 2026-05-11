@@ -12,7 +12,6 @@ Usage
     uv run python main.py noordholland       # Noord-Holland (Noord-Hollands Archief)
     uv run python main.py zeeland            # Zeeland (Zeeuws Archief)
     uv run python main.py gelderland         # Gelderland (Gelders Archief)
-    uv run python main.py openarchieven      # (deprecated – all archives migrated)
     uv run python main.py all                # Run all pipelines
 """
 from __future__ import annotations
@@ -25,22 +24,6 @@ def _run_friesland() -> None:
     print("=== Friesland pipeline (Tresoar / AlleFriezen, Memorix API) ===")
     from python.friesland import main as run
     run()
-
-
-def _run_openarchieven() -> None:
-    print("=== Open Archieven pipeline (deprecated – all migrated) ===")
-
-    print("--- Step 1: collecting record GUIDs ---")
-    from python.step1_collect_record_guids_from_search_api import main as step1
-    step1()
-
-    print("--- Step 2: parsing OAI-PMH XML dumps ---")
-    from python.step2_oai_pmh_dumps import main as step2
-    step2()
-
-    print("--- Step 3: downloading scans ---")
-    from python.step3_download_steps import main as step3
-    step3()
 
 
 def _run_nationaalarchief() -> None:
@@ -99,7 +82,6 @@ def _run_gelderland() -> None:
 
 PIPELINES = {
     "friesland":        _run_friesland,
-    "openarchieven":    _run_openarchieven,
     "nationaalarchief": _run_nationaalarchief,
     "drentsarchief":    _run_drentsarchief,
     "bhic":             _run_bhic,

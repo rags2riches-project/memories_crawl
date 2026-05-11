@@ -14,8 +14,8 @@ The registers are organised by fiscal district (*kantoor*) and contain individua
 
 | Province | Archive | System | Scans on disk | Status |
 |---|---|---|---|---|
-| Friesland | Tresoar | Open Archieven | 155,205 | ✅ |
-| Gelderland | Gelders Archief | Open Archieven | 178,462 | ✅ |
+| Friesland | Tresoar | Memorix REST API | — | ✅ 1,107 registers, ~238k persons |
+| Gelderland | Gelders Archief | MAIS + Playwright | — | ✅ 21 kantoren |
 | Zuid-Holland | Nationaal Archief | Custom scraper | 42 (test run) | ✅ |
 | Drenthe | Drents Archief | Memorix REST API | ~1,086 | ✅ |
 | Noord-Brabant | BHIC | Memorix REST API | — | ✅ 1,896 registers |
@@ -25,26 +25,26 @@ The registers are organised by fiscal district (*kantoor*) and contain individua
 | Noord-Holland | Noord-Hollands Archief | MAIS + Playwright | — | ✅ |
 | Zeeland | Zeeuws Archief | MAIS + Playwright | — | ✅ |
 
-**Playwright note**: Overijssel, Utrecht, Limburg, Noord-Holland, and Zeeland (MAIS) pipelines require `uv run playwright install chromium` to download the matching Chromium browser before running.
+**Playwright note**: Gelderland, Overijssel, Utrecht, Limburg, Noord-Holland, and Zeeland (MAIS) pipelines require `uv run playwright install chromium` to download the matching Chromium browser before running.
 
 ---
 
 ## Quick start
 
-**Requirements**: Python ≥ 3.14, [uv](https://docs.astral.sh/uv/).
+**Requirements**: Python >= 3.14, [uv](https://docs.astral.sh/uv/).
 
 ```bash
 # Install dependencies
 uv sync
 
-# First-time Overijssel setup (Playwright/Chromium)
+# First-time MAIS/Playwright setup (Gelderland, Overijssel, Utrecht, Limburg, Noord-Holland, Zeeland)
 uv run playwright install chromium
 
 # Download all archives (takes several hours)
 uv run python main.py all
 
 # Or run one archive at a time
-uv run python main.py openarchieven
+uv run python main.py friesland
 uv run python main.py nationaalarchief
 uv run python main.py drentsarchief
 uv run python main.py bhic
@@ -53,36 +53,63 @@ uv run python main.py utrechtsarchief
 uv run python main.py limburg
 uv run python main.py noordholland
 uv run python main.py zeeland
+uv run python main.py gelderland
 ```
 
 ---
 
 ## Pipelines in detail
 
-### Open Archieven (2 archives)
+### Friesland – Tresoar / AlleFriezen
 
-`uv run python main.py openarchieven`
+`uv run python main.py friesland`
+Source file: `python/friesland.py`
 
-Covers: Tresoar (Friesland), Gelders Archief.
+Uses Tresoar's **Memorix genealogy REST API** via the AlleFriezen tenant key
+(`aa030ec4-12d0-4dc0-afaf-b65fd6128b39`).
 
-The five archives that were previously also covered by this pipeline now use dedicated custom scrapers: BHIC (`bhic`), RHCL/Limburg (`limburg`), Het Utrechts Archief (`utrechtsarchief`), Noord-Hollands Archief (`noordholland`), and Zeeuws Archief (`zeeland`).
+1. Enumerates all 1,107 MvS registers via `/register?fq=search_s_type_title:"Memories van successie"`.
+2. For each register, paginates `/deed` (assets embedded) and `/person`.
+3. Joins persons to deeds by `deed_id`, filters to *overledene* persons.
+4. Downloads all `asset[].download` URLs (JPEG 2000 `.jp2`, full-size).
 
-**Three steps run in sequence:**
+Tafel V-bis is not present at Tresoar (0 results for "tafel" or "v-bis").
 
-1. **Step 1** (`python/step1_collect_record_guids_from_search_api.py`)  
-   Queries the Open Archieven search API (`api.openarch.nl`) for each archive and collects all record GUIDs. Output: `records.csv`.
+Progress is tracked in `friesland_progress.csv` (per-register). Existing per-person directories (with `metadata.json`) are skipped on reruns.
+Output: `scans/friesland/{kantoor}/{invnr}/{person_slug}/`.
 
-2. **Step 2** (`python/step2_oai_pmh_dumps.py`)  
-   Downloads the full OAI-PMH XML export for each archive from `www.openarchieven.nl/exports/xml/` (hosted on S3), parses the A2A records, filters to *Memories van Successie* only (excluding Tafel V-bis), and extracts scan URLs and metadata. Output: `scan_urls.csv`. Dump files are cached in `dumps/` so reruns skip the download.
+---
 
-3. **Step 3** (`python/step3_download_steps.py`)  
-   Downloads every scan JPEG listed in `scan_urls.csv` and writes a `metadata.json` sidecar next to each group of scans. Output: `scans/openarchieven/{archive}/{record_id}/`.
+### Gelderland – Gelders Archief
+
+`uv run python main.py gelderland`
+Source file: `python/gelderland.py`
+
+Uses the **MAIS Internet viewer** (`miadt=37`, `mivast=37`) on the `geldersarchief.nl` domain. Unlike other MAIS instances, the Gelders Archief gives **each kantoor its own archive code** (micode). 21 kantoren are configured with codes 0021–0037, 0092, 0221–0223.
+
+1. For each kantoor (micode), navigates to the inv2 root, picks the "Register IV" top-level minr (filtering out Tafel VI / V-bis).
+2. Enumerates leaf inventarisnummers via the inv3 tree, expanding all period sub-sections and filtering for digitized (h_scan) items.
+3. For each leaf invnr, navigates to the inv2 minr page (strip auto-loads), force-loads all strip chunks via `mi_strip_store.populate()`, and harvests thumbnail URLs (`fonc-gea`).
+4. Converts thumbnail URLs to full-size (`?format=large`, 1024-pixel-tall PNG) and downloads.
+
+**Image URL format:**
+```
+https://preserve2.archieven.nl/mi-37/fonc-gea/{code}/{invnr}/
+    {invnr}-{page:04d}.jp2
+    ?format=large&miadt=37&miahd={miahd}&mivast=37&rdt={rdt}&open={token}
+```
+
+The full-resolution JP2 is only reachable via IIPSrv tile-server requests; `format=large` is the practical maximum.
+
+Inventory and token caches (`inventory_{code}.json`, `tokens_{code}.json` with partial saves every 25 invnrs) skip Playwright on reruns. Already-downloaded kantoren are tracked in `scans/gelderland/done.txt`.
+
+**First-time setup**: run `uv run playwright install chromium` after `uv sync`.
 
 ---
 
 ### Nationaal Archief – Zuid-Holland
 
-`uv run python main.py nationaalarchief`  
+`uv run python main.py nationaalarchief`
 Source file: `python/nationaalarchief.py`
 
 Access number **3.06.05**. The pipeline:
@@ -90,14 +117,14 @@ Access number **3.06.05**. The pipeline:
 2. For each inventory number, loads the viewer page and extracts scan UUIDs from the embedded `drupal-settings-json` data block.
 3. Downloads full-size scans from `service.archief.nl/api/file/v1/default/{UUID}`.
 
-Progress is tracked in `nationaalarchief_done.txt` so interrupted runs can be resumed.  
+Progress is tracked in `nationaalarchief_done.txt` so interrupted runs can be resumed.
 Output: `scans/nationaalarchief/{invnr}/`.
 
 ---
 
 ### Drents Archief
 
-`uv run python main.py drentsarchief`  
+`uv run python main.py drentsarchief`
 Source file: `python/drentsarchief.py`
 
 Uses the **Memorix genealogy REST API** at `webservices.memorix.nl/genealogy` (~106,000 deeds total).
@@ -106,14 +133,14 @@ Uses the **Memorix genealogy REST API** at `webservices.memorix.nl/genealogy` (~
 2. Collects unique deed IDs and fetches the deed detail for each.
 3. Downloads all `asset[].download` URLs (full-size JPEGs).
 
-Progress is tracked in `drentsarchief_deeds.csv`.  
+Progress is tracked in `drentsarchief_deeds.csv`.
 Output: `scans/drentsarchief/{deed_id}/`.
 
 ---
 
 ### BHIC – Brabants Historisch Informatie Centrum (Noord-Brabant)
 
-`uv run python main.py bhic`  
+`uv run python main.py bhic`
 Source file: `python/bhic.py`
 
 Uses the **same Memorix backend** as Drenthe but with a different tenant key
@@ -128,14 +155,14 @@ level — so the pipeline pivots around registers, not deeds.
 Tafel V-bis is not indexed at BHIC, but a defensive filter skips any record
 whose name/type still contains "tafel" or "v-bis".
 
-Progress is tracked in `bhic_progress.csv`.  
+Progress is tracked in `bhic_progress.csv`.
 Output: `scans/bhic/{gemeente}/deel_{invnr}/`.
 
 ---
 
 ### Limburg – Regionaal Historisch Centrum Limburg (RHCL)
 
-`uv run python main.py limburg`  
+`uv run python main.py limburg`
 Source file: `python/limburg.py`
 
 Uses the **MAIS Internet viewer on archieven.nl** (`miadt=38`, `mivast=0`). Covers two archive codes:
@@ -149,7 +176,7 @@ The pipeline uses **Playwright/Chromium** to:
 
 1. Navigate to the inv2 root for each code, expand all "Records N t/m M" batch toggles, then harvest digitized invnr minr values (marked with `h_scan.gif`). Exclusion: 07.D08's sibling "Tafels 5bis" section is never entered.
 2. For each digitized invnr: navigate to the inv2 page (strip auto-loads), click "Volgende" until all pages are loaded, harvest per-page tokens from `<img src>` attributes.
-3. Download full-size PNG scans (`format=large`, 714×1024).
+3. Download full-size PNG scans (`format=large`, 714x1024).
 
 Inventory and token caches (`scans/limburg/inventory_{code}.json`, `scans/limburg/tokens_{code}_{invnr}.json`) skip the slow Playwright pass on reruns.
 
@@ -159,7 +186,7 @@ Inventory and token caches (`scans/limburg/inventory_{code}.json`, `scans/limbur
 
 ### Overijssel – Historisch Centrum Overijssel
 
-`uv run python main.py overijssel`  
+`uv run python main.py overijssel`
 Source file: `python/overijssel.py`
 
 The HCO uses a MAIS Internet viewer where scan images require per-page authentication tokens (`miahd`, `rdt`, `open`) injected by the browser-side JavaScript. These cannot be retrieved with plain HTTP requests.
@@ -181,7 +208,7 @@ Covers all 10 kantoren: Almelo, Deventer, Enschede, Goor, Kampen, Ommen, Raalte,
 
 ### Utrechts Archief – Het Utrechts Archief (HUA)
 
-`uv run python main.py utrechtsarchief`  
+`uv run python main.py utrechtsarchief`
 Source file: `python/utrechtsarchief.py`
 
 The HUA also uses a MAIS Internet viewer (`miadt=39`, `mivast=39`). The pipeline uses **Playwright/Chromium** with the same stk3 inline toggle approach as Overijssel:
@@ -205,7 +232,7 @@ Covers all 11 kantoren: Amersfoort, Amerongen, Loenen, Maarssen, Montfoort, Rhen
 
 ### Noord-Holland – Noord-Hollands Archief (NHA)
 
-`uv run python main.py noordholland`  
+`uv run python main.py noordholland`
 Source file: `python/noordholland.py`
 
 Uses the **MAIS Internet viewer** (`miadt=236`, `mivast=236`, archive code 178) on the `noord-hollandsarchief.nl` domain. The pipeline uses **Playwright/Chromium** with the same stk3 inline toggle approach as Overijssel and Utrecht:
@@ -223,7 +250,7 @@ Token results are cached per period minr in `scans/noordholland/tokens_{minr}.js
 
 ### Zeeland – Zeeuws Archief
 
-`uv run python main.py zeeland`  
+`uv run python main.py zeeland`
 Source file: `python/zeeland.py`
 
 Uses the **MAIS Internet viewer** (`miadt=239`, `mivast=239`) on the `zeeuwsarchief.nl` domain. The archive is identified by `micode=398` ("Ontvangers der Successierechten in Zeeland, (1795) 1806-1927"). The pipeline uses **Playwright/Chromium** with the same stk3 inline toggle approach as Overijssel, Utrecht, and Noord-Holland:
@@ -244,12 +271,12 @@ Token results are cached per kantoor in `scans/zeeland/tokens_minr_{minr}.json` 
 
 ```
 scans/
-├── openarchieven/
-│   ├── frl/{record_id}/          ← Friesland (Tresoar)
-│   │   ├── metadata.json
-│   │   ├── 1.jpg
-│   │   └── 2.jpg …
-│   └── gra/{record_id}/          ← Gelderland
+├── friesland/{kantoor}/{invnr}/{person_slug}/
+│   ├── metadata.json
+│   └── 0001.jp2 …
+├── gelderland/{kantoor}/{invnr:04d}/
+│   ├── metadata.json
+│   └── {invnr}-0001.jpg …
 ├── nationaalarchief/{invnr}/
 │   ├── metadata.json
 │   └── NL-HaNA_3.06.05_{invnr}_*.jpg
@@ -303,7 +330,8 @@ Fields vary by archive depending on what metadata is available in the source sys
 
 All pipelines are designed to be safely restarted:
 
-- **Open Archieven step 3**: skips files that already exist and have a non-zero size.
+- **Friesland**: tracks completed registers in `friesland_progress.csv` (rows with `status=done` are skipped); existing per-person directories (with `metadata.json`) are skipped on reruns.
+- **Gelderland**: inventory and token cache files (`inventory_{code}.json`, `tokens_{code}.json` with partial saves every 25 invnrs) skip the slow Playwright pass; already-downloaded images are skipped by file existence check. Completed kantoren are tracked in `scans/gelderland/done.txt`.
 - **Nationaal Archief**: tracks completed inventory numbers in `nationaalarchief_done.txt`.
 - **Drents Archief**: tracks completed deeds in `drentsarchief_deeds.csv` (rows with `status=done` are skipped).
 - **BHIC**: tracks completed registers in `bhic_progress.csv` (rows with `status=done` are skipped); already-downloaded scans are skipped by file existence check.
