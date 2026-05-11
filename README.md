@@ -133,6 +133,30 @@ Output: `scans/bhic/{gemeente}/deel_{invnr}/`.
 
 ---
 
+### Limburg – Regionaal Historisch Centrum Limburg (RHCL)
+
+`uv run python main.py limburg`  
+Source file: `python/limburg.py`
+
+Uses the **MAIS Internet viewer on archieven.nl** (`miadt=38`, `mivast=0`). Covers two archive codes:
+
+| Code   | Period           | Total invnrs | Digitized | Organised by      |
+|--------|------------------|--------------|-----------|-------------------|
+| 07.D03 | 1818–1900 (1905) | 1,314        | 111       | Plaats (place)    |
+| 07.D08 | 1901–1927        | 460          | 42        | Kantoor           |
+
+The pipeline uses **Playwright/Chromium** to:
+
+1. Navigate to the inv2 root for each code, expand all "Records N t/m M" batch toggles, then harvest digitized invnr minr values (marked with `h_scan.gif`). Exclusion: 07.D08's sibling "Tafels 5bis" section is never entered.
+2. For each digitized invnr: navigate to the inv2 page (strip auto-loads), click "Volgende" until all pages are loaded, harvest per-page tokens from `<img src>` attributes.
+3. Download full-size PNG scans (`format=large`, 714×1024).
+
+Inventory and token caches (`scans/limburg/inventory_{code}.json`, `scans/limburg/tokens_{code}_{invnr}.json`) skip the slow Playwright pass on reruns.
+
+**First-time setup**: run `uv run playwright install chromium` after `uv sync`.
+
+---
+
 ### Overijssel – Historisch Centrum Overijssel
 
 `uv run python main.py overijssel`  
@@ -179,6 +203,24 @@ Covers all 11 kantoren: Amersfoort, Amerongen, Loenen, Maarssen, Montfoort, Rhen
 
 ---
 
+### Noord-Holland – Noord-Hollands Archief (NHA)
+
+`uv run python main.py noordholland`  
+Source file: `python/noordholland.py`
+
+Uses the **MAIS Internet viewer** (`miadt=236`, `mivast=236`, archive code 178) on the `noord-hollandsarchief.nl` domain. The pipeline uses **Playwright/Chromium** with the same stk3 inline toggle approach as Overijssel and Utrecht:
+
+1. Navigates to the inv2 page for archive 178; 15 kantoor-level entries are parsed from the initial DOM.
+2. For each kantoor: expands the tree node to reveal period children, collects their minr values, and filters out Tafel V-bis items.
+3. For each MvS period minr: navigates to the inv3 page, collects all stk3 child items, toggles each one to force-load the thumbnail strip, harvests per-page tokens from `<img src>` attributes.
+4. Converts thumbnail URLs to full-size (removes `?format=thumb`) and downloads.
+
+Token results are cached per period minr in `scans/noordholland/tokens_{minr}.json` with partial saves for crash resilience. Already-downloaded kantoren are tracked in `scans/noordholland/done.txt`.
+
+**First-time setup**: run `uv run playwright install chromium` after `uv sync`.
+
+---
+
 ### Zeeland – Zeeuws Archief
 
 `uv run python main.py zeeland`  
@@ -218,15 +260,21 @@ scans/
 │   ├── metadata.json
 │   ├── deeds.json
 │   └── {Gemeente}_{NNN}_NNNN.jpg …
-└── overijssel/{kantoor}/{invnr}/
-    ├── metadata.json
-    └── 0000.jpg …
+├── limburg/{code}/{invnr}/
+│   ├── metadata.json
+│   └── 0001.jpg …
+├── overijssel/{kantoor}/{invnr}/
+│   ├── metadata.json
+│   └── 0000.jpg …
 ├── utrechtsarchief/{kantoor}/{invnr}/
 │   ├── metadata.json
 │   └── 0000.jpg …
-├── zeeland/{kantoor}/{invnr}/
+├── noordholland/{kantoor}/{invnr:04d}/
 │   ├── metadata.json
-│   └── 0000.jpg …
+│   └── 0001.jpg …
+└── zeeland/{kantoor}/{invnr}/
+    ├── metadata.json
+    └── 0000.jpg …
 ```
 
 ## Metadata JSON format
@@ -260,5 +308,7 @@ All pipelines are designed to be safely restarted:
 - **Drents Archief**: tracks completed deeds in `drentsarchief_deeds.csv` (rows with `status=done` are skipped).
 - **BHIC**: tracks completed registers in `bhic_progress.csv` (rows with `status=done` are skipped); already-downloaded scans are skipped by file existence check.
 - **Overijssel**: token cache files (`tokens_minr_*.json`) skip the slow Playwright pass; already-downloaded images are skipped by file existence check.
+- **Limburg**: inventory and token cache files (`inventory_{code}.json`, `tokens_{code}_{invnr}.json`) skip the slow Playwright pass; already-downloaded images are skipped by file existence check.
 - **Utrechts Archief**: token cache files (`tokens_{micode}_{minr}.json`, with partial saves every 25 items for crash resilience) skip the slow Playwright pass; already-downloaded images are skipped by file existence check. Completed inventarisnummers are tracked in `done_{kantoor}.txt` per kantoor.
+- **Noord-Holland**: token cache files (`tokens_{minr}.json`, with partial saves for crash resilience) skip the slow Playwright pass; already-downloaded images are skipped by file existence check. Completed kantoren are tracked in `scans/noordholland/done.txt`.
 - **Zeeland**: token cache files (`tokens_minr_{minr}.json`, with partial saves for crash resilience) skip the slow Playwright pass; already-downloaded images are skipped by file existence check. Completed kantoren are tracked in `scans/zeeland/done.txt`.
