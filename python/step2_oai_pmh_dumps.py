@@ -14,10 +14,9 @@ from urllib.parse import urljoin
 
 import requests
 
-# Only Tresoar (Friesland) remains on Open Archieven; Gelders Archief used to
-# be served here under code "gra" but is now scraped directly by the
-# ``python/gelderland.py`` pipeline.
-ARCHIVES = ["frl"]
+# All archives have been migrated to custom scrapers (Tresoar → friesland.py,
+# Gelders Archief → gelderland.py).
+ARCHIVES: list[str] = []
 BASE_EXPORT_URL = "https://www.openarchieven.nl/exports/"
 DEFAULT_OUTPUT_FILE = "scan_urls.csv"
 CHECKPOINT_FILE = "step2_checkpoint.json"

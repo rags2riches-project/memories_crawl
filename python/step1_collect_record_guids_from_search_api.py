@@ -9,10 +9,9 @@ from typing import Any
 
 import requests
 
-# Only Tresoar (Friesland) remains on Open Archieven; Gelders Archief used to
-# be served here under code "gra" but is now scraped directly by the
-# ``python/gelderland.py`` pipeline.
-ARCHIVES = ["frl"]
+# All archives have been migrated to custom scrapers (Tresoar → friesland.py,
+# Gelders Archief → gelderland.py).
+ARCHIVES: list[str] = []
 BASE_URL = "https://api.openarch.nl/1.1/records/search.php"
 PAGE_SIZE = 100
 OUTPUT_FILE = "records.csv"

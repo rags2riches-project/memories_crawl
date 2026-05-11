@@ -7,7 +7,8 @@ Downloads all surviving *Memories van Successie* (Dutch succession/inheritance r
 ## How to run
 
 ```bash
-uv run python main.py openarchieven      # Tresoar (Friesland) only
+uv run python main.py friesland          # Friesland (Tresoar / AlleFriezen, Memorix API)
+uv run python main.py openarchieven      # (deprecated – all archives migrated)
 uv run python main.py nationaalarchief   # Zuid-Holland (Nationaal Archief 3.06.05)
 uv run python main.py drentsarchief      # Drenthe (Memorix API)
 uv run python main.py bhic               # Noord-Brabant (BHIC Memorix API)
@@ -36,6 +37,7 @@ uv run python main.py all
 | `python/limburg.py` | Limburg (RHCL): Playwright on archieven.nl, strip Volgende-step |
 | `python/noordholland.py` | Noord-Holland: Playwright-based MAIS stk3 inline strip extraction |
 | `python/zeeland.py` | Zeeland: Playwright-based MAIS hybrid (inv3 discovery + inv2 strip harvest) |
+| `python/friesland.py` | Friesland: Tresoar / AlleFriezen Memorix REST API, register→deed→person chain |
 | `python/gelderland.py` | Gelderland: Playwright-based MAIS, one micode per kantoor (21 codes), strip auto-loads on inv2 minr |
 
 ## Exclusion rule
@@ -85,6 +87,7 @@ Each pipeline was live-tested against the real APIs and servers.
 
 | Pipeline | API/Server | End-to-end | Notes |
 |---|---|---|---|
+| **friesland** | ✅ | ⚠️ not yet tested | Tresoar / AlleFriezen Memorix REST API. 1,107 registers, ~238k persons. Deed-level assets with .jp2 downloads. Person→deed join via deed_id. Output: scans/friesland/{kantoor}/{invnr}/{person}/. |
 | **nationaalarchief** | ✅ | ✅ | 70 scans downloaded from invnr 2276 in 60s (174 MB). EAD XML parses correctly, drupal-settings-json extraction works, `service.archief.nl` download works. |
 | **drentsarchief** | ✅ | ⚠️ slow start | API returns ~106k deeds. Pipeline must paginate ~1064 pages to collect all deed IDs **before** any download begins (~5 min). Once collection finishes, downloads work (8.3 MB/scan tested). |
 | **openarchieven** | ✅ | ⚠️ slow start | All 7 archive dump URLs resolve on S3. Step 1 paginates millions of records (546k for BHI alone) before step 2 can begin. Expect hours before first scan file. |
@@ -97,11 +100,9 @@ Each pipeline was live-tested against the real APIs and servers.
 
 **Setup reminder**: Chromium must be installed with `uv run playwright install chromium` (not bare `playwright install chromium`).
 
-**Open Archieven archive codes**: frl (Tresoar/Friesland) only. Gelders Archief
-(formerly served here under code `gra`) is now scraped directly via
-`python/gelderland.py`; the other archives (BHIC, Zeeuws Archief, RHCL/Limburg,
-HUA/Utrecht, NHA/Noord-Holland) have always been served by dedicated custom
-scrapers.
+**Open Archieven archive codes**: All archives have been migrated to custom
+scrapers. Gelders Archief (formerly `gra`) → `python/gelderland.py`; Tresoar /
+Friesland (formerly `frl`) → `python/friesland.py`.
 
 ---
 
@@ -148,6 +149,52 @@ Full image:    asset[].download  (https://images.memorix.nl/bhic/download/fullsi
 1,896 registers total. Code prefixes are `036.03.01..19` (Memories van successie,
 kantoor X) plus `021.13` (Memories van successie Brabant). Tafel V-bis is not
 indexed at BHIC, but `_is_tafel()` filters defensively just in case.
+
+### Friesland (Tresoar / AlleFriezen) – Memorix REST API
+
+Tresoar's *Memories van Successie* are served via AlleFriezen, which runs the
+same Memorix Genealogy REST API as Drenthe and BHIC.
+
+```
+Base: https://webservices.memorix.nl/genealogy
+Key:  aa030ec4-12d0-4dc0-afaf-b65fd6128b39
+Tenant: frl
+Register list: GET /register?q=*:*&fq=search_s_type_title:"Memories van successie"&rows=100&page=N
+Deeds:         GET /deed?fq=register_id:{register_id}&rows=100&page=N
+Persons:       GET /person?fq=register_id:{register_id}&rows=100&page=N
+Full image:    asset[].download → https://tresoar-images.memorix.nl/frl/download/fullsize/{path}.jp2
+```
+
+1,107 registers total, ~238,576 persons. Entity types: `mvs` (register),
+`mvs_a` (deed/akte), `mvs_a_persoon` (person). One person per deed (the
+"overledene"). Deeds embed their asset references directly (`has_assets: "deed"`,
+`asset[].download`).
+
+Tafel V-bis is not present in the Tresoar collection (0 results).
+
+**Person metadata** includes `person_display_name`, `voornaam`, `tussenvoegsel`,
+`geslachtsnaam`, `patroniem`, `datum_overlijden`, `plaats` (overlijdensplaats),
+`plaats_wonen`, `geslacht`.
+
+Deed metadata includes `nummer` (aktenummer), `plaats`, `diversen`
+(free-text notes with filmnummer, estate details, family relations).
+
+**Image format**: JPEG 2000 (`.jp2`). No format conversion is done;
+convert with `magick mogrify -format jpg *.jp2` if needed.
+
+```
+Folder layout
+─────────────
+  scans/friesland/{kantoor}/{invnr}/{person_slug}/
+      {NNNN}.jp2           – sequentially numbered scan pages
+      metadata.json        – per-person info (name, date of death, …)
+```
+
+Kantoor is extracted from the register `naam` field (e.g. "Sneek" from
+"Memories kantoor Sneek").
+
+**Resume**: `friesland_progress.csv` tracks completed registers. Existing
+per-person directories (with `metadata.json`) are skipped on reruns.
 
 ### Limburg (RHCL) – archieven.nl MAIS
 
