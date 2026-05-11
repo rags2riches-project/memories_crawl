@@ -16,7 +16,7 @@ The registers are organised by fiscal district (*kantoor*) and contain individua
 |---|---|---|---|---|---|
 | Noord-Brabant | BHIC | `bhi` | Open Archieven | 738 | X |
 | Noord-Brabant | BHIC (custom) | — | Memorix REST API | — | ✅ direct pipeline, 1,896 registers |
-| Zeeland | Zeeuws Archief | `zar` | Open Archieven | 0 | X pipeline runs, no records found |
+| Zeeland | Zeeuws Archief | `398` | MAIS viewer + Playwright | — | ✅ needs browser install |
 | Friesland | Tresoar | `frl` | Open Archieven | 155,205 | ✅ |
 | Limburg | RHCL | `rhl` | Open Archieven | 0 | X pipeline runs, no records found |
 | Utrecht | Het Utrechts Archief | `337-*` | MAIS viewer + Playwright | — | ✅ needs browser install, 11 kantoren |
@@ -26,7 +26,7 @@ The registers are organised by fiscal district (*kantoor*) and contain individua
 | Drenthe | Drents Archief | — | Memorix REST API | ~1,086 | Recheck |
 | Overijssel | Historisch Centrum Overijssel | — | MAIS viewer + Playwright | 10 | ✅ needs browser install |
 
-**Playwright note**: Both Overijssel and Utrecht (MAIS) pipelines require `uv run playwright install chromium` to download the matching Chromium browser before running.
+**Playwright note**: Overijssel, Utrecht, Limburg, Noord-Holland, and Zeeland (MAIS) pipelines require `uv run playwright install chromium` to download the matching Chromium browser before running.
 
 ---
 
@@ -51,6 +51,9 @@ uv run python main.py drentsarchief
 uv run python main.py bhic
 uv run python main.py overijssel
 uv run python main.py utrechtsarchief
+uv run python main.py limburg
+uv run python main.py noordholland
+uv run python main.py zeeland
 ```
 
 ---
@@ -175,6 +178,25 @@ Covers all 11 kantoren: Amersfoort, Amerongen, Loenen, Maarssen, Montfoort, Rhen
 
 ---
 
+### Zeeland – Zeeuws Archief
+
+`uv run python main.py zeeland`  
+Source file: `python/zeeland.py`
+
+Uses the **MAIS Internet viewer** (`miadt=239`, `mivast=239`) on the `zeeuwsarchief.nl` domain. The archive is identified by `micode=398` ("Ontvangers der Successierechten in Zeeland, (1795) 1806-1927"). The pipeline uses **Playwright/Chromium** with the same stk3 inline toggle approach as Overijssel, Utrecht, and Noord-Holland:
+
+1. Navigates to the `inv2` inventory page for archive 398, discovers kantoor sections from the tree (`mi_inv3_openinv` links).
+2. Expands each kantoor node to reveal inventarisnummers with stk3 inline strips.
+3. Calls `mi_inv3_toggle_stk()` for each inventarisnummer to load the stk3 thumbnail strip.
+4. Force-loads all strip chunks and harvests per-page tokens from `<img src>` attributes.
+5. Derives full-size URLs by stripping `?format=thumb` from thumbnail URLs and downloads scans.
+
+Token results are cached per kantoor in `scans/zeeland/tokens_minr_{minr}.json` with partial saves for crash resilience. Already-downloaded kantoren are tracked in `scans/zeeland/done.txt`.
+
+**First-time setup**: run `uv run playwright install chromium` after `uv sync`.
+
+---
+
 ## Output structure
 
 ```
@@ -204,8 +226,11 @@ scans/
     ├── metadata.json
     └── 0000.jpg …
 ├── utrechtsarchief/{kantoor}/{invnr}/
-    ├── metadata.json
-    └── 0000.jpg …
+│   ├── metadata.json
+│   └── 0000.jpg …
+├── zeeland/{kantoor}/{invnr}/
+│   ├── metadata.json
+│   └── 0000.jpg …
 ```
 
 ## Metadata JSON format
@@ -240,3 +265,4 @@ All pipelines are designed to be safely restarted:
 - **BHIC**: tracks completed registers in `bhic_progress.csv` (rows with `status=done` are skipped); already-downloaded scans are skipped by file existence check.
 - **Overijssel**: token cache files (`tokens_minr_*.json`) skip the slow Playwright pass; already-downloaded images are skipped by file existence check.
 - **Utrechts Archief**: token cache files (`tokens_{micode}_{minr}.json`, with partial saves every 25 items for crash resilience) skip the slow Playwright pass; already-downloaded images are skipped by file existence check. Completed inventarisnummers are tracked in `done_{kantoor}.txt` per kantoor.
+- **Zeeland**: token cache files (`tokens_minr_{minr}.json`, with partial saves for crash resilience) skip the slow Playwright pass; already-downloaded images are skipped by file existence check. Completed kantoren are tracked in `scans/zeeland/done.txt`.

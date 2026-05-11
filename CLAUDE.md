@@ -15,6 +15,7 @@ uv run python main.py overijssel         # Overijssel (HCO) – requires Playwri
 uv run python main.py utrechtsarchief    # Utrecht (Het Utrechts Archief) – requires Playwright
 uv run python main.py limburg            # Limburg (RHCL, archieven.nl MAIS) – requires Playwright
 uv run python main.py noordholland       # Noord-Holland (Noord-Hollands Archief) – requires Playwright
+uv run python main.py zeeland            # Zeeland (Zeeuws Archief) – requires Playwright
 uv run python main.py all
 ```
 
@@ -33,6 +34,7 @@ uv run python main.py all
 | `python/utrechtsarchief.py` | Utrecht: Playwright-based MAIS stk3 inline strip extraction |
 | `python/limburg.py` | Limburg (RHCL): Playwright on archieven.nl, strip Volgende-step |
 | `python/noordholland.py` | Noord-Holland: Playwright-based MAIS stk3 inline strip extraction |
+| `python/zeeland.py` | Zeeland: Playwright-based MAIS hybrid (inv3 discovery + inv2 strip harvest) |
 
 ## Exclusion rule
 
@@ -88,6 +90,7 @@ Each pipeline was live-tested against the real APIs and servers.
 | **utrechtsarchief** | ✅ | ⚠️ slow first run | Playwright + Chromium. Uses stk3 inline toggle (same approach as Overijssel). Amersfoort verified: 66,615 pages from 211 invnrs across 2 subsections (~12 min harvest). Token results cached per subsection — reruns skip Playwright. 11 kantoren configured. |
 | **limburg** | ✅ | ✅ verified | archieven.nl MAIS (miadt=38, mivast=0). Two codes: 07.D03 (1818-1900, 111 digitized of 1,314, ~104k scans, by place) and 07.D08 (1901-1927, 42 digitized of 460, ~7k scans, by kantoor). End-to-end smoke-tested: invnr 1 (Amby) → 527 pages; invnr 491 (Gennep) → 207 pages. Inventory + tokens cached per code/invnr; reruns skip Playwright. Image format is `format=large` PNG (714×1024); see module docstring for trade-off vs. IIPSrv full-res JP2 path. |
 | **noordholland** | ✅ | ⚠️ not yet tested | noord-hollandsarchief.nl MAIS (miadt=236, mivast=236, micode=178). Uses stk3 inline toggle (same approach as Overijssel/Utrecht). Kantoor sections discovered dynamically from inv2 tree. Tokens cached per section minr; reruns skip Playwright. Image server: preserve-nha.archieven.nl/mi-0/fonc-nha/178/. |
+| **zeeland** | ✅ | ✅ verified | Zeeuws Archief MAIS (miadt=239, mivast=239, micode=398). Hybrid approach: inv3 tree for discovery (kantoor→sub-section→invnr with h_scan markers), inv2 minr pages for strip harvesting (auto-loads strip, force-load all chunks via mi_strip_store.populate()). Goes verified: 990 digitized invnrs of 1,109, invnr 1 → 327 pages, invnr 2 → 373 pages. Image server: preserve-zaf.archieven.nl/mi-239/fonc-zaf/398/. Downloads at `format=large` PNG (673×1024). Filenames include segment slug for uniqueness (e.g. `1-1_0001.jpg`). Tokens cached per kantoor in `tokens_minr_{minr}.json`. |
 
 **Setup reminder**: Chromium must be installed with `uv run playwright install chromium` (not bare `playwright install chromium`).
 
@@ -216,3 +219,58 @@ Note that the preserve URL uses `mivast=0` (not 236), same pattern as Limburg.
 
 **Resume**: ``scans/noordholland/done.txt`` tracks completed kantoor sections.
 Partial token caches allow resuming interrupted harvest runs.
+
+### Zeeland (Zeeuws Archief) – MAIS token extraction
+
+First-time setup: ``uv sync && playwright install chromium``
+
+The Zeeuws Archief runs its own MAIS instance on the zeeuwsarchief.nl domain. The
+scraper takes a **hybrid approach**:
+
+1. **Discovery** – Navigates to the inv3 tree view for each kantoor minr, expands
+   all sub-sections via swapinv clicks, then harvests inventarisnummer minr values
+   (and their texts) from stk3 onclick handlers. Digitized items are those whose
+   tree node carries an `h_scan.gif` marker. Tafel V-bis filtered by text.
+
+2. **Token harvest** – Navigates to each invnr's inv2 minr page. The strip viewer
+   auto-loads on this page. All strip chunks are force-loaded via
+   ``mi_strip_store.populate()``, then thumbnail ``<img>`` elements with
+   ``src*="fonc-zaf"`` are harvested from the DOM.
+
+3. **Download** – Thumbnails have ``?format=thumb``; replacing with ``?format=large``
+   yields 673×1024 PNG. The preserve server is ``preserve-zaf.archieven.nl/mi-239/``.
+
+**Image URL format:**
+```
+https://preserve-zaf.archieven.nl/mi-239/fonc-zaf/398/{invnr}/
+    NL-MdbZA_398_{invnr}_{slug}_{page:04d}.jpg
+    ?format=large&miadt=239&miahd={miahd}&mivast=239&rdt={rdt}&open={token}
+```
+Some images omit the ``{slug}_`` component (e.g. ``NL-MdbZA_398_1_0001.jpg``). The
+slug provides uniqueness when the same trailing page number appears in multiple
+scan segments within one register.
+
+**Kantoren** (9 total, discovered dynamically):
+
+| Kantoor     | minr      | Digitized invnrs | Total invnrs |
+|-------------|-----------|------------------|--------------|
+| Goes        | 33439946  | 990              | 1,109        |
+| Hulst       | 33439947  | TBD              | TBD          |
+| Colijnsplaat/Kortgene | 33439948 | TBD       | TBD          |
+| Middelburg  | 33439949  | TBD              | TBD          |
+| Oostburg    | 33439950  | TBD              | TBD          |
+| Tholen      | 33439951  | TBD              | TBD          |
+| Veere       | 33439952  | TBD              | TBD          |
+| Vlissingen  | 33439953  | TBD              | TBD          |
+| Zierikzee   | 33439954  | TBD              | TBD          |
+
+**Caches**:
+- ``scans/zeeland/kantoren.json`` – discovered kantoor entries with minr values
+- ``scans/zeeland/tokens_minr_{minr}.json`` – per-page tokens for one kantoor
+- ``scans/zeeland/tokens_minr_{minr}_partial.json`` – incremental save (crash-resilient)
+
+**Resume**: ``scans/zeeland/done.txt`` tracks completed kantoren.
+Partial token caches allow resuming interrupted harvest runs.
+
+**Smoke test** (2026-05-11): Goes invnr 1 → 327 pages, invnr 2 → 373 pages.
+Downloads at ``format=large`` PNG (673×1024, ~300KB–950KB per page).
