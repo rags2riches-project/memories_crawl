@@ -7,7 +7,7 @@ Downloads all surviving *Memories van Successie* (Dutch succession/inheritance r
 ## How to run
 
 ```bash
-uv run python main.py openarchieven      # Tresoar (Friesland), Gelders Archief
+uv run python main.py openarchieven      # Tresoar (Friesland) only
 uv run python main.py nationaalarchief   # Zuid-Holland (Nationaal Archief 3.06.05)
 uv run python main.py drentsarchief      # Drenthe (Memorix API)
 uv run python main.py bhic               # Noord-Brabant (BHIC Memorix API)
@@ -16,6 +16,7 @@ uv run python main.py utrechtsarchief    # Utrecht (Het Utrechts Archief) – re
 uv run python main.py limburg            # Limburg (RHCL, archieven.nl MAIS) – requires Playwright
 uv run python main.py noordholland       # Noord-Holland (Noord-Hollands Archief) – requires Playwright
 uv run python main.py zeeland            # Zeeland (Zeeuws Archief) – requires Playwright
+uv run python main.py gelderland         # Gelderland (Gelders Archief) – requires Playwright
 uv run python main.py all
 ```
 
@@ -35,6 +36,7 @@ uv run python main.py all
 | `python/limburg.py` | Limburg (RHCL): Playwright on archieven.nl, strip Volgende-step |
 | `python/noordholland.py` | Noord-Holland: Playwright-based MAIS stk3 inline strip extraction |
 | `python/zeeland.py` | Zeeland: Playwright-based MAIS hybrid (inv3 discovery + inv2 strip harvest) |
+| `python/gelderland.py` | Gelderland: Playwright-based MAIS, one micode per kantoor (21 codes), strip auto-loads on inv2 minr |
 
 ## Exclusion rule
 
@@ -91,10 +93,15 @@ Each pipeline was live-tested against the real APIs and servers.
 | **limburg** | ✅ | ✅ verified | archieven.nl MAIS (miadt=38, mivast=0). Two codes: 07.D03 (1818-1900, 111 digitized of 1,314, ~104k scans, by place) and 07.D08 (1901-1927, 42 digitized of 460, ~7k scans, by kantoor). End-to-end smoke-tested: invnr 1 (Amby) → 527 pages; invnr 491 (Gennep) → 207 pages. Inventory + tokens cached per code/invnr; reruns skip Playwright. Image format is `format=large` PNG (714×1024); see module docstring for trade-off vs. IIPSrv full-res JP2 path. |
 | **noordholland** | ✅ | ⚠️ not yet tested | noord-hollandsarchief.nl MAIS (miadt=236, mivast=236, micode=178). Uses stk3 inline toggle (same approach as Overijssel/Utrecht). Kantoor sections discovered dynamically from inv2 tree. Tokens cached per section minr; reruns skip Playwright. Image server: preserve-nha.archieven.nl/mi-0/fonc-nha/178/. |
 | **zeeland** | ✅ | ✅ verified | Zeeuws Archief MAIS (miadt=239, mivast=239, micode=398). Hybrid approach: inv3 tree for discovery (kantoor→sub-section→invnr with h_scan markers), inv2 minr pages for strip harvesting (auto-loads strip, force-load all chunks via mi_strip_store.populate()). Goes verified: 990 digitized invnrs of 1,109, invnr 1 → 327 pages, invnr 2 → 373 pages. Image server: preserve-zaf.archieven.nl/mi-239/fonc-zaf/398/. Downloads at `format=large` PNG (673×1024). Filenames include segment slug for uniqueness (e.g. `1-1_0001.jpg`). Tokens cached per kantoor in `tokens_minr_{minr}.json`. |
+| **gelderland** | ✅ | ✅ verified | Gelders Archief MAIS (miadt=37, mivast=37). 21 kantoren, each with its own micode (0021–0037, 0092, 0221–0223). Per-kantoor pipeline: inv2 → pick "Register IV" minr (filter "Tafel VI / V-bis") → inv3 → swapinv-expand period sub-sections → collect leaf invnrs with `h_scan` markers and `^\d+\s` text. Per-invnr token harvest = navigate to inv2&minr=…, force-load strip via `mi_strip_store.populate()`, harvest `img[src*="fonc-gea"]`. Borculo (0022) verified end-to-end: 49 digitized invnrs, invnr 1 → 38 pages, full-size 1024×858 PNG (~570 KB/page). Image server: preserve2.archieven.nl/mi-37/fonc-gea/{code}/. Filenames `{invnr}-{page:04d}.jpg`. Inventory + tokens cached per code; reruns skip Playwright. |
 
 **Setup reminder**: Chromium must be installed with `uv run playwright install chromium` (not bare `playwright install chromium`).
 
-**Open Archieven archive codes**: frl (Tresoar/Friesland), gra (Gelders Archief). The other five archives (BHIC, Zeeuws Archief, RHCL/Limburg, HUA/Utrecht, NHA/Noord-Holland) are now served by dedicated custom scrapers.
+**Open Archieven archive codes**: frl (Tresoar/Friesland) only. Gelders Archief
+(formerly served here under code `gra`) is now scraped directly via
+`python/gelderland.py`; the other archives (BHIC, Zeeuws Archief, RHCL/Limburg,
+HUA/Utrecht, NHA/Noord-Holland) have always been served by dedicated custom
+scrapers.
 
 ---
 
@@ -270,3 +277,71 @@ Partial token caches allow resuming interrupted harvest runs.
 
 **Smoke test** (2026-05-11): Goes invnr 1 → 327 pages, invnr 2 → 373 pages.
 Downloads at ``format=large`` PNG (673×1024, ~300KB–950KB per page).
+
+### Gelderland (Gelders Archief) – per-kantoor MAIS code
+
+First-time setup: ``uv sync && uv run playwright install chromium``
+
+Unlike every other MAIS instance in the project, the Gelders Archief gives
+**each kantoor its own archief-code**. Twenty-one kantoren are hardcoded in
+``KANTOREN`` (resolved 2026-05-11 from the kantoor permalinks listed at
+``https://www.geldersarchief.nl/informatie/zoekhulp/997-memories-van-successie``):
+
+| Kantoor     | Code  | Kantoor     | Code  | Kantoor     | Code  |
+|-------------|-------|-------------|-------|-------------|-------|
+| Arnhem      | 0021  | Elst        | 0028  | Tiel        | 0026  |
+| Apeldoorn   | 0092  | Groenlo     | 0029  | Wageningen  | 0036  |
+| Borculo     | 0022  | Harderwijk  | 0030  | Winterswijk | 0223  |
+| Culemborg   | 0023  | Hattem      | 0031  | Zaltbommel  | 0037  |
+| Doesburg    | 0024  | Lochem      | 0032  | Zevenaar    | 0221  |
+| Druten      | 0025  | Nijkerk     | 0033  | Zutphen     | 0222  |
+| Elburg      | 0027  | Nijmegen    | 0034  |             |       |
+|             |       | Terborg     | 0035  |             |       |
+
+Inside each kantoor's inv2 tree there are normally two top-level openinv items:
+
+1. *Register IV, akten van het recht van successie en van overgang …* – the
+   actual Memories van Successie.  Scraper keeps this.
+2. *Tafel VI, alfabetische index … en Tafel V-bis, …* – Tafel V-bis is
+   excluded per the project-wide rule, so we filter any top-level openinv
+   whose text contains "tafel", "v-bis", or "5bis".
+
+Below Register IV the records are grouped by 5-year periods ("Akten,
+1818-1825.", "Akten, 1826-1830.", …).  Each period eventually contains the
+leaf inventarisnummers ("1  1818", "140  1895 eerste kwartaal", …).
+Digitized leaves carry an ``h_scan.gif`` icon in their tree row; leaves whose
+text starts with ``^\d+\s`` and that have the marker are kept.
+
+Scans are accessed by navigating to each leaf invnr's inv2 page; the
+thumbnail strip auto-loads (25 thumbs initially) and remaining chunks are
+force-loaded via ``mi_strip_store[…].populate()`` exactly as the Zeeland
+scraper does.
+
+**Image URL format:**
+```
+https://preserve2.archieven.nl/mi-37/fonc-gea/{code}/{invnr}/
+    {invnr}-{page:04d}.jp2
+    ?format=large&miadt=37&miahd={miahd}&mivast=37&rdt={rdt}&open={token}
+```
+Note the unusual filename convention: the file is named after the
+inventarisnummer (``{invnr}-{page:04d}.jp2``), not a fixed archive
+identifier.  The path itself also contains ``{invnr}`` between the code and
+filename.  ``?format=large`` returns a 1024-pixel-tall PNG (~500 KB/page);
+the full-resolution JP2 is only reachable via IIPSrv tile-server requests
+that would require an extra viewer load per page (~tens of thousands of
+extra requests project-wide), so ``format=large`` is the practical maximum
+here.
+
+**Caches**:
+- ``scans/gelderland/inventory_{code}.json`` – discovered leaf invnrs for one
+  kantoor: ``[{invnr, text, minr, hasScan}, …]``
+- ``scans/gelderland/tokens_{code}.json`` – per-page tokens for one kantoor
+- ``scans/gelderland/tokens_{code}_partial.json`` – incremental save written
+  every 25 invnrs so a crash mid-harvest doesn't lose work
+
+**Resume**: ``scans/gelderland/done.txt`` tracks completed kantoor codes.
+
+**Smoke test** (2026-05-11): Borculo (code 0022) end-to-end – 49 digitized
+invnrs discovered, invnr 1 ("1 1818 eerste halfjaar") → 38 pages, full-size
+download = 1024×858 PNG (~570 KB).  Tafel-only kantoor sections are
+automatically skipped at the Register-IV selection step.

@@ -11,6 +11,7 @@ Usage
     uv run python main.py limburg            # Limburg (RHCL, archieven.nl MAIS)
     uv run python main.py noordholland       # Noord-Holland (Noord-Hollands Archief)
     uv run python main.py zeeland            # Zeeland (Zeeuws Archief)
+    uv run python main.py gelderland         # Gelderland (Gelders Archief)
     uv run python main.py all                # Run all pipelines
 """
 from __future__ import annotations
@@ -83,6 +84,12 @@ def _run_zeeland() -> None:
     run()
 
 
+def _run_gelderland() -> None:
+    print("=== Gelderland pipeline (Gelders Archief) ===")
+    from python.gelderland import main as run
+    run()
+
+
 PIPELINES = {
     "openarchieven":    _run_openarchieven,
     "nationaalarchief": _run_nationaalarchief,
@@ -93,6 +100,7 @@ PIPELINES = {
     "limburg":          _run_limburg,
     "noordholland":     _run_noordholland,
     "zeeland":          _run_zeeland,
+    "gelderland":       _run_gelderland,
 }
 
 
