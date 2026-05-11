@@ -10,6 +10,7 @@ Downloads all surviving *Memories van Successie* (Dutch succession/inheritance r
 uv run python main.py openarchieven      # BHIC, Zeeuws Archief, HUA, Gelders, NHA
 uv run python main.py nationaalarchief   # Zuid-Holland (Nationaal Archief 3.06.05)
 uv run python main.py drentsarchief      # Drenthe (Memorix API)
+uv run python main.py bhic               # Noord-Brabant (BHIC Memorix API)
 uv run python main.py overijssel         # Overijssel (HCO) – requires Playwright
 uv run python main.py utrechtsarchief    # Utrecht (Het Utrechts Archief) – requires Playwright
 uv run python main.py all
@@ -25,6 +26,7 @@ uv run python main.py all
 | `python/step3_download_steps.py` | Open Archieven: download scans from `scan_urls.csv` |
 | `python/nationaalarchief.py` | Zuid-Holland: scrape viewer pages, download via UUID |
 | `python/drentsarchief.py` | Drenthe: Memorix REST API, deed→asset chain |
+| `python/bhic.py` | Noord-Brabant (BHIC): Memorix REST API, register→asset chain |
 | `python/overijssel.py` | Overijssel: Playwright-based MAIS token extraction |
 | `python/utrechtsarchief.py` | Utrecht: Playwright-based MAIS stk3 inline strip extraction |
 
@@ -111,3 +113,26 @@ Person search: GET /person?q=*:*&fq=search_s_deed_type_title:"Successiememories"
 Deed detail:   GET /deed/{deed_id}
 Full image:    asset[].download  (e.g. https://images.memorix.nl/dre/download/fullsize/{uuid}.jpg)
 ```
+
+### BHIC (Noord-Brabant) API
+
+Same Memorix backend, **different tenant key**, and scans live at the **register**
+level (one register = one bound book), not at the deed level.
+
+```
+Base: https://webservices.memorix.nl/genealogy
+Key:  24c66d08-da4a-4d60-917f-5942681dcaa1
+Register list: GET /register?q=*:*&fq=search_s_type_title:"memorie van successie"&rows=100&page=N
+Assets:        GET /asset?fq=register_id:{register_id}&rows=100&page=N
+Deeds:         GET /deed?fq=register_id:{register_id}&rows=100&page=N
+Persons:       GET /person?fq=register_id:{register_id}&rows=100&page=N
+Full image:    asset[].download  (https://images.memorix.nl/bhic/download/fullsize/{file_id}.jpg)
+```
+
+1,896 registers total. Code prefixes are `036.03.01..19` (Memories van successie,
+kantoor X) plus `021.13` (Memories van successie Brabant). Tafel V-bis is not
+indexed at BHIC, but `_is_tafel()` filters defensively just in case.
+
+**Important**: BHIC is also covered by the Open Archieven pipeline (`bhi` code).
+The custom `bhic` pipeline is direct, faster on cold start, and adds a
+`deeds.json` sidecar per register with all per-akte / per-overledene info.

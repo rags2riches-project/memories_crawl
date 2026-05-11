@@ -5,6 +5,7 @@ Usage
     uv run python main.py openarchieven      # 5 archives via Open Archieven (step 1–3)
     uv run python main.py nationaalarchief   # Zuid-Holland (Nationaal Archief)
     uv run python main.py drentsarchief      # Drenthe (Memorix API)
+    uv run python main.py bhic               # Noord-Brabant (BHIC Memorix API)
     uv run python main.py overijssel         # Overijssel – INCOMPLETE, see python/overijssel.py
     uv run python main.py utrechtsarchief    # Utrecht (Het Utrechts Archief)
     uv run python main.py all                # Run all pipelines
@@ -43,6 +44,12 @@ def _run_drentsarchief() -> None:
     run()
 
 
+def _run_bhic() -> None:
+    print("=== BHIC pipeline (Noord-Brabant, Memorix API) ===")
+    from python.bhic import main as run
+    run()
+
+
 def _run_overijssel() -> None:
     print("=== Overijssel pipeline (INCOMPLETE – see python/overijssel.py) ===")
     from python.overijssel import main as run
@@ -59,6 +66,7 @@ PIPELINES = {
     "openarchieven":    _run_openarchieven,
     "nationaalarchief": _run_nationaalarchief,
     "drentsarchief":    _run_drentsarchief,
+    "bhic":             _run_bhic,
     "overijssel":       _run_overijssel,
     "utrechtsarchief":  _run_utrechtsarchief,
 }

@@ -15,6 +15,7 @@ The registers are organised by fiscal district (*kantoor*) and contain individua
 | Province | Archive | Code | System | Scans on disk | Status |
 |---|---|---|---|---|---|
 | Noord-Brabant | BHIC | `bhi` | Open Archieven | 738 | X |
+| Noord-Brabant | BHIC (custom) | — | Memorix REST API | — | ✅ direct pipeline, 1,896 registers |
 | Zeeland | Zeeuws Archief | `zar` | Open Archieven | 0 | X pipeline runs, no records found |
 | Friesland | Tresoar | `frl` | Open Archieven | 155,205 | ✅ |
 | Limburg | RHCL | `rhl` | Open Archieven | 0 | X pipeline runs, no records found |
@@ -47,6 +48,7 @@ uv run python main.py all
 uv run python main.py openarchieven
 uv run python main.py nationaalarchief
 uv run python main.py drentsarchief
+uv run python main.py bhic
 uv run python main.py overijssel
 uv run python main.py utrechtsarchief
 ```
@@ -102,6 +104,28 @@ Uses the **Memorix genealogy REST API** at `webservices.memorix.nl/genealogy` (~
 
 Progress is tracked in `drentsarchief_deeds.csv`.  
 Output: `scans/drentsarchief/{deed_id}/`.
+
+---
+
+### BHIC – Brabants Historisch Informatie Centrum (Noord-Brabant)
+
+`uv run python main.py bhic`  
+Source file: `python/bhic.py`
+
+Uses the **same Memorix backend** as Drenthe but with a different tenant key
+(`24c66d08-da4a-4d60-917f-5942681dcaa1`). Crucially, BHIC's scans live at the
+**register** level (one register = one bound book of memories), not at the deed
+level — so the pipeline pivots around registers, not deeds.
+
+1. Enumerates all 1,896 registers via `/register?fq=search_s_type_title:"memorie van successie"`. Covers both `036.03.xx` (kantoor series) and `021.13` (Memories van successie Brabant).
+2. For each register, paginates `/asset?fq=register_id:{id}` and downloads every `asset[].download` URL (full-size JPEG).
+3. Paginates `/deed?fq=register_id:{id}` and `/person?fq=register_id:{id}` and writes them, joined, as a `deeds.json` sidecar — giving you aktenummer, plaats, naam van de overledene, datum overlijden, … alongside the scans.
+
+Tafel V-bis is not indexed at BHIC, but a defensive filter skips any record
+whose name/type still contains "tafel" or "v-bis".
+
+Progress is tracked in `bhic_progress.csv`.  
+Output: `scans/bhic/{gemeente}/deel_{invnr}/`.
 
 ---
 
@@ -172,6 +196,10 @@ scans/
 ├── drentsarchief/{deed_id}/
 │   ├── metadata.json
 │   └── 0001.jpg …
+├── bhic/{gemeente}/deel_{invnr}/
+│   ├── metadata.json
+│   ├── deeds.json
+│   └── {Gemeente}_{NNN}_NNNN.jpg …
 └── overijssel/{kantoor}/{invnr}/
     ├── metadata.json
     └── 0000.jpg …
@@ -209,5 +237,6 @@ All pipelines are designed to be safely restarted:
 - **Open Archieven step 3**: skips files that already exist and have a non-zero size.
 - **Nationaal Archief**: tracks completed inventory numbers in `nationaalarchief_done.txt`.
 - **Drents Archief**: tracks completed deeds in `drentsarchief_deeds.csv` (rows with `status=done` are skipped).
+- **BHIC**: tracks completed registers in `bhic_progress.csv` (rows with `status=done` are skipped); already-downloaded scans are skipped by file existence check.
 - **Overijssel**: token cache files (`tokens_minr_*.json`) skip the slow Playwright pass; already-downloaded images are skipped by file existence check.
 - **Utrechts Archief**: token cache files (`tokens_{micode}_{minr}.json`, with partial saves every 25 items for crash resilience) skip the slow Playwright pass; already-downloaded images are skipped by file existence check. Completed inventarisnummers are tracked in `done_{kantoor}.txt` per kantoor.
