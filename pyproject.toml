@@ -30,9 +30,9 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/bas/memories_crawl"
-Repository = "https://github.com/bas/memories_crawl"
-Documentation = "https://github.com/bas/memories_crawl#readme"
+Homepage = "https://github.com/rags2riches-project/memories_crawl"
+Repository = "https://github.com/rags2riches-project/memories_crawl"
+Documentation = "https://github.com/rags2riches-project/memories_crawl#readme"
 
 [project.scripts]
 memories-crawl = "memories_crawl.cli:main"

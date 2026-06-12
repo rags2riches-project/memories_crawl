@@ -40,7 +40,7 @@ pip install memories-crawl
 Or for development with [uv](https://docs.astral.sh/uv/):
 
 ```bash
-git clone https://github.com/bas/memories_crawl.git
+git clone https://github.com/rags2riches-project/memories_crawl.git
 cd memories_crawl
 uv sync
 ```
