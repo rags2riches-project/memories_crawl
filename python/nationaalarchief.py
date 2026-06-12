@@ -14,6 +14,7 @@ For each inventory number:
 """
 from __future__ import annotations
 
+import csv
 import json
 import re
 import time
@@ -252,7 +253,7 @@ def _write_metadata(dest_dir: Path, invnr: int, html: str, scans: list[dict]) ->
         json.dump(meta, f, ensure_ascii=False, indent=2)
 
 
-def _list_inventory(inv_numbers: list[int]) -> None:
+def _list_inventory(inv_numbers: list[int], csv_out: str | None = None) -> None:
     """Print inventory numbers compactly, grouping consecutive ranges."""
     if not inv_numbers:
         print("  (none)")
@@ -277,8 +278,17 @@ def _list_inventory(inv_numbers: list[int]) -> None:
             print(f"  {lo}–{hi}")
     print()
 
+    if csv_out:
+        with open(csv_out, "w", newline="", encoding="utf-8") as f:
+            writer = csv.writer(f)
+            writer.writerow(["invnr"])
+            for n in inv_numbers:
+                writer.writerow([n])
+        print(f"Wrote {len(inv_numbers)} rows to {csv_out}\n")
 
-def main(invnrs: set[str] | None = None, list_invnrs: bool = False) -> None:
+
+def main(invnrs: set[str] | None = None, list_invnrs: bool = False,
+         csv_out: str | None = None) -> None:
     session = _session()
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -291,7 +301,7 @@ def main(invnrs: set[str] | None = None, list_invnrs: bool = False) -> None:
         print(f"Filtered to {len(inv_numbers)} inventory numbers matching --invnr.")
 
     if list_invnrs:
-        _list_inventory(inv_numbers)
+        _list_inventory(inv_numbers, csv_out=csv_out)
         return
 
     done_file = Path("nationaalarchief_done.txt")

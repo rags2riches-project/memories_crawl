@@ -20,64 +20,74 @@ import argparse
 import sys
 
 
-def _run_friesland(invnrs: set[str] | None = None, list_invnrs: bool = False) -> None:
+def _run_friesland(invnrs: set[str] | None = None, list_invnrs: bool = False,
+                   csv_out: str | None = None) -> None:
     print("=== Friesland pipeline (Tresoar / AlleFriezen, Memorix API) ===")
     from python.friesland import main as run
-    run(invnrs=invnrs, list_invnrs=list_invnrs)
+    run(invnrs=invnrs, list_invnrs=list_invnrs, csv_out=csv_out)
 
 
-def _run_nationaalarchief(invnrs: set[str] | None = None, list_invnrs: bool = False) -> None:
+def _run_nationaalarchief(invnrs: set[str] | None = None, list_invnrs: bool = False,
+                          csv_out: str | None = None) -> None:
     print("=== Nationaal Archief pipeline (Zuid-Holland, access 3.06.05) ===")
     from python.nationaalarchief import main as run
-    run(invnrs=invnrs, list_invnrs=list_invnrs)
+    run(invnrs=invnrs, list_invnrs=list_invnrs, csv_out=csv_out)
 
 
-def _run_drentsarchief(invnrs: set[str] | None = None, list_invnrs: bool = False) -> None:
+def _run_drentsarchief(invnrs: set[str] | None = None, list_invnrs: bool = False,
+                       csv_out: str | None = None) -> None:
     print("=== Drents Archief pipeline (Memorix API) ===")
     from python.drentsarchief import main as run
-    run(invnrs=invnrs, list_invnrs=list_invnrs)
+    run(invnrs=invnrs, list_invnrs=list_invnrs, csv_out=csv_out)
 
 
-def _run_bhic(invnrs: set[str] | None = None, list_invnrs: bool = False) -> None:
+def _run_bhic(invnrs: set[str] | None = None, list_invnrs: bool = False,
+              csv_out: str | None = None) -> None:
     print("=== BHIC pipeline (Noord-Brabant, Memorix API) ===")
     from python.bhic import main as run
-    run(invnrs=invnrs, list_invnrs=list_invnrs)
+    run(invnrs=invnrs, list_invnrs=list_invnrs, csv_out=csv_out)
 
 
-def _run_overijssel(invnrs: set[str] | None = None, list_invnrs: bool = False) -> None:
+def _run_overijssel(invnrs: set[str] | None = None, list_invnrs: bool = False,
+                    csv_out: str | None = None) -> None:
     print("=== Overijssel pipeline (INCOMPLETE – see python/overijssel.py) ===")
     from python.overijssel import main as run
-    run(invnrs=invnrs, list_invnrs=list_invnrs)
+    run(invnrs=invnrs, list_invnrs=list_invnrs, csv_out=csv_out)
 
 
-def _run_utrechtsarchief(invnrs: set[str] | None = None, list_invnrs: bool = False) -> None:
+def _run_utrechtsarchief(invnrs: set[str] | None = None, list_invnrs: bool = False,
+                         csv_out: str | None = None) -> None:
     print("=== Utrechts Archief pipeline ===")
     from python.utrechtsarchief import main as run
-    run(invnrs=invnrs, list_invnrs=list_invnrs)
+    run(invnrs=invnrs, list_invnrs=list_invnrs, csv_out=csv_out)
 
 
-def _run_limburg(invnrs: set[str] | None = None, list_invnrs: bool = False) -> None:
+def _run_limburg(invnrs: set[str] | None = None, list_invnrs: bool = False,
+                 csv_out: str | None = None) -> None:
     print("=== Limburg pipeline (RHCL, archieven.nl MAIS) ===")
     from python.limburg import main as run
-    run(invnrs=invnrs, list_invnrs=list_invnrs)
+    run(invnrs=invnrs, list_invnrs=list_invnrs, csv_out=csv_out)
 
 
-def _run_noordholland(invnrs: set[str] | None = None, list_invnrs: bool = False) -> None:
+def _run_noordholland(invnrs: set[str] | None = None, list_invnrs: bool = False,
+                      csv_out: str | None = None) -> None:
     print("=== Noord-Holland pipeline (Noord-Hollands Archief) ===")
     from python.noordholland import main as run
-    run(invnrs=invnrs, list_invnrs=list_invnrs)
+    run(invnrs=invnrs, list_invnrs=list_invnrs, csv_out=csv_out)
 
 
-def _run_zeeland(invnrs: set[str] | None = None, list_invnrs: bool = False) -> None:
+def _run_zeeland(invnrs: set[str] | None = None, list_invnrs: bool = False,
+                 csv_out: str | None = None) -> None:
     print("=== Zeeland pipeline (Zeeuws Archief) ===")
     from python.zeeland import main as run
-    run(invnrs=invnrs, list_invnrs=list_invnrs)
+    run(invnrs=invnrs, list_invnrs=list_invnrs, csv_out=csv_out)
 
 
-def _run_gelderland(invnrs: set[str] | None = None, list_invnrs: bool = False) -> None:
+def _run_gelderland(invnrs: set[str] | None = None, list_invnrs: bool = False,
+                    csv_out: str | None = None) -> None:
     print("=== Gelderland pipeline (Gelders Archief) ===")
     from python.gelderland import main as run
-    run(invnrs=invnrs, list_invnrs=list_invnrs)
+    run(invnrs=invnrs, list_invnrs=list_invnrs, csv_out=csv_out)
 
 
 PIPELINES = {
@@ -116,13 +126,26 @@ def main() -> None:
         default=False,
         help="List available inventory numbers and exit (no download).",
     )
+    parser.add_argument(
+        "--csv",
+        dest="csv_out",
+        nargs="?",
+        const="__default__",
+        default=None,
+        help="Write --list-invnrs output to a CSV file. "
+             "Optional filename (default: {pipeline}_invnrs.csv).",
+    )
     args = parser.parse_args()
 
     invnr_filter: set[str] | None = set(args.invnrs) if args.invnrs else None
     targets = list(PIPELINES) if args.pipeline == "all" else [args.pipeline]
     for name in targets:
+        csv_path: str | None = None
+        if args.csv_out is not None:
+            csv_path = f"{name}_invnrs.csv" if args.csv_out == "__default__" else args.csv_out
         try:
-            PIPELINES[name](invnrs=invnr_filter, list_invnrs=args.list_invnrs)
+            PIPELINES[name](invnrs=invnr_filter, list_invnrs=args.list_invnrs,
+                            csv_out=csv_path)
         except Exception as exc:
             print(f"ERROR in {name}: {exc}", file=sys.stderr)
             if args.pipeline != "all":

@@ -66,6 +66,7 @@ Dependency: ``uv sync && uv run playwright install chromium``.
 """
 from __future__ import annotations
 
+import csv
 import json
 import re
 import time
@@ -518,7 +519,8 @@ def _write_metadata(
 # Main
 # ---------------------------------------------------------------------------
 
-def main(invnrs: set[str] | None = None, list_invnrs: bool = False) -> None:
+def main(invnrs: set[str] | None = None, list_invnrs: bool = False,
+         csv_out: str | None = None) -> None:
     session = requests.Session()
     session.headers["User-Agent"] = USER_AGENT
     session.headers["Referer"] = "https://www.geldersarchief.nl/"
@@ -526,6 +528,7 @@ def main(invnrs: set[str] | None = None, list_invnrs: bool = False) -> None:
 
     # --list-invnrs: discover + print for all kantoren, then exit
     if list_invnrs:
+        csv_rows: list[dict] = []
         for kantoor, code in KANTOREN.items():
             discovered = _discover_invnrs(kantoor, code)
             if invnrs is not None:
@@ -537,7 +540,21 @@ def main(invnrs: set[str] | None = None, list_invnrs: bool = False) -> None:
                 print(f"  {'------':>6}  -----------")
                 for it in digitized:
                     print(f"  {it['invnr']:>6}  {it['text'][:60]}")
+                    csv_rows.append({
+                        "kantoor": kantoor,
+                        "code": code,
+                        "invnr": it["invnr"],
+                        "description": it["text"],
+                    })
         print()
+        if csv_out and csv_rows:
+            with open(csv_out, "w", newline="", encoding="utf-8") as f:
+                writer = csv.DictWriter(
+                    f, fieldnames=["kantoor", "code", "invnr", "description"]
+                )
+                writer.writeheader()
+                writer.writerows(csv_rows)
+            print(f"Wrote {len(csv_rows)} rows to {csv_out}\n")
         return
 
     done_file = OUTPUT_DIR / "done.txt"

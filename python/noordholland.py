@@ -35,6 +35,7 @@ Dependency: ``uv sync && uv run playwright install chromium``.
 """
 from __future__ import annotations
 
+import csv
 import json
 import re
 import time
@@ -505,7 +506,8 @@ def _write_metadata(
 # Main
 # ---------------------------------------------------------------------------
 
-def main(invnrs: set[str] | None = None, list_invnrs: bool = False) -> None:
+def main(invnrs: set[str] | None = None, list_invnrs: bool = False,
+         csv_out: str | None = None) -> None:
     session = requests.Session()
     session.headers["User-Agent"] = USER_AGENT
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -513,6 +515,7 @@ def main(invnrs: set[str] | None = None, list_invnrs: bool = False) -> None:
     # Phase 1: Discover kantoren and their MvS period sections
     print("Discovering kantoor sections …")
     sections = _discover_sections()
+    csv_rows: list[dict] = []
 
     if not sections:
         print("ERROR: no sections found. The tree structure may have changed.")
@@ -578,6 +581,13 @@ def main(invnrs: set[str] | None = None, list_invnrs: bool = False) -> None:
             for invnr in sorted(invnr_pages.keys()):
                 desc = invnr_texts.get(invnr, "")[:30]
                 print(f"    {invnr:>6}  {desc:<30}  {len(invnr_pages[invnr]):>5}")
+                csv_rows.append({
+                    "kantoor": kantoor,
+                    "period": period_text[:60],
+                    "invnr": invnr,
+                    "description": invnr_texts.get(invnr, ""),
+                    "pages": len(invnr_pages[invnr]),
+                })
             continue
 
         downloaded = skipped = missing = 0
@@ -621,6 +631,14 @@ def main(invnrs: set[str] | None = None, list_invnrs: bool = False) -> None:
 
     if list_invnrs:
         print()
+        if csv_out and csv_rows:
+            with open(csv_out, "w", newline="", encoding="utf-8") as f:
+                writer = csv.DictWriter(
+                    f, fieldnames=["kantoor", "period", "invnr", "description", "pages"]
+                )
+                writer.writeheader()
+                writer.writerows(csv_rows)
+            print(f"Wrote {len(csv_rows)} rows to {csv_out}\n")
         return
 
     print(f"\n===== COMPLETE =====")

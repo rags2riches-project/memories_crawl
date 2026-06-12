@@ -238,7 +238,7 @@ def _load_done() -> set[str]:
     return done
 
 
-def _list_registers(registers: list[dict]) -> None:
+def _list_registers(registers: list[dict], csv_out: str | None = None) -> None:
     """Print a table of available inventory numbers from register metadata."""
     print(f"\n{'invnr':>6}  {'gemeente':<20}  register name")
     print(f"{'------':>6}  {'------------------':<20}  {'-------------'}")
@@ -250,8 +250,22 @@ def _list_registers(registers: list[dict]) -> None:
         print(f"  {invnr:>6}  {gemeente:<20}  {naam}")
     print()
 
+    if csv_out:
+        with open(csv_out, "w", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(f, fieldnames=["invnr", "gemeente", "register_name"])
+            writer.writeheader()
+            for reg in registers:
+                md = reg.get("metadata") or {}
+                writer.writerow({
+                    "invnr": md.get("inventarisnummer") or "",
+                    "gemeente": md.get("gemeente") or "",
+                    "register_name": md.get("naam") or "",
+                })
+        print(f"Wrote {len(registers)} rows to {csv_out}\n")
 
-def main(invnrs: set[str] | None = None, list_invnrs: bool = False) -> None:
+
+def main(invnrs: set[str] | None = None, list_invnrs: bool = False,
+         csv_out: str | None = None) -> None:
     session = _session()
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -267,7 +281,7 @@ def main(invnrs: set[str] | None = None, list_invnrs: bool = False) -> None:
         print(f"Filtered to {len(registers)} registers matching --invnr.")
 
     if list_invnrs:
-        _list_registers(registers)
+        _list_registers(registers, csv_out=csv_out)
         return
 
     done = _load_done()

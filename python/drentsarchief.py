@@ -146,7 +146,8 @@ def _get_deed_invnr(deed_data: dict) -> str:
     )
 
 
-def main(invnrs: set[str] | None = None, list_invnrs: bool = False) -> None:
+def main(invnrs: set[str] | None = None, list_invnrs: bool = False,
+         csv_out: str | None = None) -> None:
     session = _session()
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -167,10 +168,21 @@ def main(invnrs: set[str] | None = None, list_invnrs: bool = False) -> None:
                 print(f"  {i + 1}/{len(deeds)} deeds checked, "
                       f"{len(invnr_set)} unique invnrs …")
             time.sleep(0.2)
-        print(f"\n{len(invnr_set)} unique inventory numbers:\n")
-        for invnr in sorted(invnr_set, key=lambda x: (int(x) if x.isdigit() else 999999, x)):
+        sorted_invnrs = sorted(
+            invnr_set, key=lambda x: (int(x) if x.isdigit() else 999999, x)
+        )
+        print(f"\n{len(sorted_invnrs)} unique inventory numbers:\n")
+        for invnr in sorted_invnrs:
             print(f"  {invnr}")
         print()
+
+        if csv_out:
+            with open(csv_out, "w", newline="", encoding="utf-8") as f:
+                writer = csv.writer(f)
+                writer.writerow(["invnr"])
+                for invnr in sorted_invnrs:
+                    writer.writerow([invnr])
+            print(f"Wrote {len(sorted_invnrs)} rows to {csv_out}\n")
         return
 
     # Write a progress CSV so the run can be resumed

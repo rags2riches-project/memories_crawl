@@ -51,6 +51,7 @@ Dependency: ``uv sync && uv run playwright install chromium``.
 """
 from __future__ import annotations
 
+import csv
 import json
 import re
 import time
@@ -434,7 +435,8 @@ def _write_metadata(dest_dir: Path, code: str, item: dict, n_scans: int) -> None
 # Entry point
 # ---------------------------------------------------------------------------
 
-def main(invnrs: set[str] | None = None, list_invnrs: bool = False) -> None:
+def main(invnrs: set[str] | None = None, list_invnrs: bool = False,
+         csv_out: str | None = None) -> None:
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     session = requests.Session()
     session.headers["User-Agent"] = USER_AGENT
@@ -458,6 +460,7 @@ def main(invnrs: set[str] | None = None, list_invnrs: bool = False) -> None:
 
     # --list-invnrs (print table and exit, no Playwright or downloads)
     if list_invnrs:
+        csv_rows: list[dict] = []
         for code, items in inventories.items():
             axis = ARCHIVE_CODES[code]["axis"]
             print(f"\n{code} ({ARCHIVE_CODES[code]['title']}):")
@@ -465,7 +468,22 @@ def main(invnrs: set[str] | None = None, list_invnrs: bool = False) -> None:
             print(f"  {'------':>6}  {'-' * min(len(axis), 20):<20}  {'------------':<12}  -----")
             for it in items:
                 print(f"  {it['invnr']:>6}  {it['name']:<20}  {it['datering']:<12}  {it['title'][:60]}")
+                csv_rows.append({
+                    "code": code,
+                    "invnr": it["invnr"],
+                    "place_or_kantoor": it.get("name", ""),
+                    "datering": it.get("datering", ""),
+                    "title": it.get("title", ""),
+                })
         print()
+        if csv_out and csv_rows:
+            with open(csv_out, "w", newline="", encoding="utf-8") as f:
+                writer = csv.DictWriter(
+                    f, fieldnames=["code", "invnr", "place_or_kantoor", "datering", "title"]
+                )
+                writer.writeheader()
+                writer.writerows(csv_rows)
+            print(f"Wrote {len(csv_rows)} rows to {csv_out}\n")
         return
 
     # Phase 2 + 3: token harvest per digitized invnr, then download.

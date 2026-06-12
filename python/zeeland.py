@@ -38,6 +38,7 @@ Dependency: ``uv sync && uv run playwright install chromium``.
 """
 from __future__ import annotations
 
+import csv
 import json
 import re
 import time
@@ -494,7 +495,8 @@ def _write_metadata(
 # Main
 # ---------------------------------------------------------------------------
 
-def main(invnrs: set[str] | None = None, list_invnrs: bool = False) -> None:
+def main(invnrs: set[str] | None = None, list_invnrs: bool = False,
+         csv_out: str | None = None) -> None:
     session = requests.Session()
     session.headers["User-Agent"] = USER_AGENT
     session.headers["Referer"] = "https://www.zeeuwsarchief.nl/"
@@ -503,6 +505,7 @@ def main(invnrs: set[str] | None = None, list_invnrs: bool = False) -> None:
     # Phase 1: Discover kantoren
     print("Discovering kantoren …")
     kantoren = _discover_kantoren()
+    csv_rows: list[dict] = []
 
     if not kantoren:
         print("ERROR: no kantoren found. The tree structure may have changed.")
@@ -551,6 +554,11 @@ def main(invnrs: set[str] | None = None, list_invnrs: bool = False) -> None:
             print(f"  {'------':>6}  -----------")
             for it in digitized:
                 print(f"  {it['invnr']:>6}  {it['text'][:60]}")
+                csv_rows.append({
+                    "kantoor": kantoor,
+                    "invnr": it["invnr"],
+                    "description": it["text"],
+                })
             continue
 
         # Phase 2b: Harvest tokens for all digitized invnrs
@@ -616,6 +624,12 @@ def main(invnrs: set[str] | None = None, list_invnrs: bool = False) -> None:
 
     if list_invnrs:
         print()
+        if csv_out and csv_rows:
+            with open(csv_out, "w", newline="", encoding="utf-8") as f:
+                writer = csv.DictWriter(f, fieldnames=["kantoor", "invnr", "description"])
+                writer.writeheader()
+                writer.writerows(csv_rows)
+            print(f"Wrote {len(csv_rows)} rows to {csv_out}\n")
         return
 
     print(f"\n===== COMPLETE =====")

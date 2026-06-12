@@ -32,6 +32,7 @@ Dependency: ``playwright`` must be installed and ``playwright install chromium``
 """
 from __future__ import annotations
 
+import csv
 import json
 import re
 import time
@@ -292,10 +293,13 @@ def _write_metadata(dest_dir: Path, kantoor: str, invnr: int, n_scans: int) -> N
         json.dump(meta, f, ensure_ascii=False, indent=2)
 
 
-def main(invnrs: set[str] | None = None, list_invnrs: bool = False) -> None:
+def main(invnrs: set[str] | None = None, list_invnrs: bool = False,
+         csv_out: str | None = None) -> None:
     session = requests.Session()
     session.headers["User-Agent"] = USER_AGENT
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+
+    csv_rows: list[dict] = []
 
     for kantoor, minr in KANTOOR_MINR.items():
         print(f"\n  {kantoor} (minr={minr}): fetching page tokens via Playwright …")
@@ -324,10 +328,11 @@ def main(invnrs: set[str] | None = None, list_invnrs: bool = False) -> None:
             print(f"  {'------':>6}  -----")
             for invnr in sorted(invnr_pages.keys()):
                 print(f"  {invnr:>6}  {len(invnr_pages[invnr]):>5}")
+                csv_rows.append({
+                    "kantoor": kantoor, "invnr": invnr,
+                    "pages": len(invnr_pages[invnr]),
+                })
             continue
-
-        downloaded = skipped = missing = 0
-        for invnr, inv_pages in sorted(invnr_pages.items()):
             dest_dir = OUTPUT_DIR / kantoor / str(invnr)
             _write_metadata(dest_dir, kantoor, invnr, len(inv_pages))
             for p in inv_pages:
@@ -346,6 +351,12 @@ def main(invnrs: set[str] | None = None, list_invnrs: bool = False) -> None:
 
     if list_invnrs:
         print()
+        if csv_out and csv_rows:
+            with open(csv_out, "w", newline="", encoding="utf-8") as f:
+                writer = csv.DictWriter(f, fieldnames=["kantoor", "invnr", "pages"])
+                writer.writeheader()
+                writer.writerows(csv_rows)
+            print(f"Wrote {len(csv_rows)} rows to {csv_out}\n")
         return
 
     print("\nDone (Overijssel).")
