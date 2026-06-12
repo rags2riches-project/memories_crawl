@@ -238,7 +238,20 @@ def _load_done() -> set[str]:
     return done
 
 
-def main(invnrs: set[str] | None = None) -> None:
+def _list_registers(registers: list[dict]) -> None:
+    """Print a table of available inventory numbers from register metadata."""
+    print(f"\n{'invnr':>6}  {'gemeente':<20}  register name")
+    print(f"{'------':>6}  {'------------------':<20}  {'-------------'}")
+    for reg in registers:
+        md = reg.get("metadata") or {}
+        invnr = md.get("inventarisnummer") or "?"
+        gemeente = md.get("gemeente") or "?"
+        naam = md.get("naam") or "?"
+        print(f"  {invnr:>6}  {gemeente:<20}  {naam}")
+    print()
+
+
+def main(invnrs: set[str] | None = None, list_invnrs: bool = False) -> None:
     session = _session()
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -252,6 +265,10 @@ def main(invnrs: set[str] | None = None) -> None:
             if (r.get("metadata") or {}).get("inventarisnummer", "") in invnrs
         ]
         print(f"Filtered to {len(registers)} registers matching --invnr.")
+
+    if list_invnrs:
+        _list_registers(registers)
+        return
 
     done = _load_done()
     write_header = not PROGRESS_CSV.exists() or PROGRESS_CSV.stat().st_size == 0

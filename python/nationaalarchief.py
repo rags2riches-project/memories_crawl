@@ -252,7 +252,33 @@ def _write_metadata(dest_dir: Path, invnr: int, html: str, scans: list[dict]) ->
         json.dump(meta, f, ensure_ascii=False, indent=2)
 
 
-def main(invnrs: set[str] | None = None) -> None:
+def _list_inventory(inv_numbers: list[int]) -> None:
+    """Print inventory numbers compactly, grouping consecutive ranges."""
+    if not inv_numbers:
+        print("  (none)")
+        return
+
+    ranges: list[tuple[int, int]] = []
+    start = inv_numbers[0]
+    end = inv_numbers[0]
+    for n in inv_numbers[1:]:
+        if n == end + 1:
+            end = n
+        else:
+            ranges.append((start, end))
+            start = end = n
+    ranges.append((start, end))
+
+    print(f"\n{len(inv_numbers)} inventory numbers in {len(ranges)} range(s):\n")
+    for lo, hi in ranges:
+        if lo == hi:
+            print(f"  {lo}")
+        else:
+            print(f"  {lo}–{hi}")
+    print()
+
+
+def main(invnrs: set[str] | None = None, list_invnrs: bool = False) -> None:
     session = _session()
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -263,6 +289,10 @@ def main(invnrs: set[str] | None = None) -> None:
     if invnrs is not None:
         inv_numbers = [n for n in inv_numbers if str(n) in invnrs]
         print(f"Filtered to {len(inv_numbers)} inventory numbers matching --invnr.")
+
+    if list_invnrs:
+        _list_inventory(inv_numbers)
+        return
 
     done_file = Path("nationaalarchief_done.txt")
     done: set[str] = set()

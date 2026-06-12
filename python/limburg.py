@@ -434,7 +434,7 @@ def _write_metadata(dest_dir: Path, code: str, item: dict, n_scans: int) -> None
 # Entry point
 # ---------------------------------------------------------------------------
 
-def main(invnrs: set[str] | None = None) -> None:
+def main(invnrs: set[str] | None = None, list_invnrs: bool = False) -> None:
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     session = requests.Session()
     session.headers["User-Agent"] = USER_AGENT
