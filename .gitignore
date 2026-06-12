@@ -7,3 +7,4 @@ dumps/
 *.txt
 dist/
 .venv/
+great-docs/

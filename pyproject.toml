@@ -39,6 +39,7 @@ memories-crawl = "memories_crawl.cli:main"
 
 [dependency-groups]
 dev = [
+    "great-docs",
     "pytest>=9.0.3",
     "ruff>=0.11.0",
 ]
