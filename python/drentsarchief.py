@@ -137,6 +137,15 @@ def _write_metadata(dest_dir: Path, deed_data: dict, person_data: dict) -> None:
         json.dump(meta, f, ensure_ascii=False, indent=2)
 
 
+def _get_deed_invnr(deed_data: dict) -> str:
+    """Extract inventarisnummer from a deed detail dict."""
+    return (
+        (deed_data.get("register", {}) or {}).get("inventarisnummer", "")
+        or deed_data.get("inventarisnummer", "")
+        or ""
+    )
+
+
 def main(invnrs: set[str] | None = None, list_invnrs: bool = False) -> None:
     session = _session()
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -144,6 +153,25 @@ def main(invnrs: set[str] | None = None, list_invnrs: bool = False) -> None:
     print("Collecting deed IDs from person search …")
     deeds = _collect_deed_ids(session)
     print(f"Found {len(deeds)} unique deeds.")
+
+    # --list-invnrs: fetch all deeds, collect unique invnrs, print and exit
+    if list_invnrs:
+        print("Fetching deed details to collect inventory numbers …")
+        invnr_set: set[str] = set()
+        for i, (deed_id, person_data) in enumerate(deeds.items()):
+            deed_data = _fetch_deed(session, deed_id)
+            invnr = _get_deed_invnr(deed_data)
+            if invnr:
+                invnr_set.add(invnr)
+            if (i + 1) % 100 == 0:
+                print(f"  {i + 1}/{len(deeds)} deeds checked, "
+                      f"{len(invnr_set)} unique invnrs …")
+            time.sleep(0.2)
+        print(f"\n{len(invnr_set)} unique inventory numbers:\n")
+        for invnr in sorted(invnr_set, key=lambda x: (int(x) if x.isdigit() else 999999, x)):
+            print(f"  {invnr}")
+        print()
+        return
 
     # Write a progress CSV so the run can be resumed
     progress_csv = Path("drentsarchief_deeds.csv")
@@ -155,7 +183,7 @@ def main(invnrs: set[str] | None = None, list_invnrs: bool = False) -> None:
                     done.add(row["deed_id"])
 
     with open(progress_csv, "a", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=["deed_id", "status", "n_scans"])
+        writer = csv.DictWriter(f, fieldnames=["deed_id", "invnr", "status", "n_scans"])
         if progress_csv.stat().st_size == 0:
             writer.writeheader()
 
@@ -163,9 +191,19 @@ def main(invnrs: set[str] | None = None, list_invnrs: bool = False) -> None:
             if deed_id in done:
                 continue
             deed_data = _fetch_deed(session, deed_id)
+            deed_invnr = _get_deed_invnr(deed_data)
+
+            # --invnr filter: skip deeds whose invnr doesn't match
+            if invnrs is not None and deed_invnr not in invnrs:
+                writer.writerow({"deed_id": deed_id, "invnr": deed_invnr,
+                                 "status": "skipped_invnr", "n_scans": 0})
+                time.sleep(0.2)
+                continue
+
             assets = deed_data.get("asset") or []
             if not assets:
-                writer.writerow({"deed_id": deed_id, "status": "no_assets", "n_scans": 0})
+                writer.writerow({"deed_id": deed_id, "invnr": deed_invnr,
+                                 "status": "no_assets", "n_scans": 0})
                 time.sleep(0.2)
                 continue
 
@@ -180,7 +218,8 @@ def main(invnrs: set[str] | None = None, list_invnrs: bool = False) -> None:
                 dest = dest_dir / f"{idx:04d}{ext}"
                 _download_file(session, download_url, dest)
 
-            writer.writerow({"deed_id": deed_id, "status": "done", "n_scans": len(assets)})
+            writer.writerow({"deed_id": deed_id, "invnr": deed_invnr,
+                             "status": "done", "n_scans": len(assets)})
             time.sleep(0.3)
 
     print("Done.")

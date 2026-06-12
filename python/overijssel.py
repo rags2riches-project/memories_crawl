@@ -310,6 +310,22 @@ def main(invnrs: set[str] | None = None, list_invnrs: bool = False) -> None:
         for p in pages:
             invnr_pages.setdefault(p["invnr"], []).append(p)
 
+        # --invnr filter before download
+        if invnrs is not None:
+            invnr_pages = {
+                invnr: ips for invnr, ips in invnr_pages.items()
+                if str(invnr) in invnrs
+            }
+
+        # --list-invnrs: print and skip download for this kantoor
+        if list_invnrs:
+            print(f"\n{kantoor}:")
+            print(f"  {'invnr':>6}  pages")
+            print(f"  {'------':>6}  -----")
+            for invnr in sorted(invnr_pages.keys()):
+                print(f"  {invnr:>6}  {len(invnr_pages[invnr]):>5}")
+            continue
+
         downloaded = skipped = missing = 0
         for invnr, inv_pages in sorted(invnr_pages.items()):
             dest_dir = OUTPUT_DIR / kantoor / str(invnr)
@@ -327,6 +343,10 @@ def main(invnrs: set[str] | None = None, list_invnrs: bool = False) -> None:
                 time.sleep(0.15)
 
         print(f"    {kantoor}: {downloaded} downloaded, {skipped} existing, {missing} missing")
+
+    if list_invnrs:
+        print()
+        return
 
     print("\nDone (Overijssel).")
 

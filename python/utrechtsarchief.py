@@ -503,6 +503,24 @@ def main(invnrs: set[str] | None = None, list_invnrs: bool = False) -> None:
 
             print(f"    {len(invnr_pages)} inventarisnummers with scans")
 
+            # --invnr filter before download
+            if invnrs is not None:
+                invnr_pages = {
+                    invnr: ips for invnr, ips in invnr_pages.items()
+                    if str(invnr) in invnrs
+                }
+                invnr_texts = {invnr: invnr_texts[invnr] for invnr in invnr_pages}
+
+            # --list-invnrs: print and skip download for this section
+            if list_invnrs:
+                print(f"\n  {kantoor} – {section['text'][:60]}:")
+                print(f"    {'invnr':>6}  {'description':<30}  pages")
+                print(f"    {'------':>6}  {'----------------------------':<30}  -----")
+                for invnr in sorted(invnr_pages.keys()):
+                    desc = invnr_texts.get(invnr, "")[:30]
+                    print(f"    {invnr:>6}  {desc:<30}  {len(invnr_pages[invnr]):>5}")
+                continue
+
             downloaded = skipped = missing = 0
             for invnr, inv_pages in sorted(invnr_pages.items()):
                 key = str(invnr)
@@ -540,6 +558,10 @@ def main(invnrs: set[str] | None = None, list_invnrs: bool = False) -> None:
                 missing += inv_missing
 
             print(f"    Section totals: {downloaded} new, {skipped} existing, {missing} missing")
+
+    if list_invnrs:
+        print()
+        return
 
     print("\nDone (Utrechts Archief).")
 

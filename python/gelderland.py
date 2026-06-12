@@ -524,6 +524,22 @@ def main(invnrs: set[str] | None = None, list_invnrs: bool = False) -> None:
     session.headers["Referer"] = "https://www.geldersarchief.nl/"
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
+    # --list-invnrs: discover + print for all kantoren, then exit
+    if list_invnrs:
+        for kantoor, code in KANTOREN.items():
+            discovered = _discover_invnrs(kantoor, code)
+            if invnrs is not None:
+                discovered = [it for it in discovered if str(it["invnr"]) in invnrs]
+            digitized = [it for it in discovered if it.get("hasScan")]
+            if digitized:
+                print(f"\n{kantoor} (code {code}):")
+                print(f"  {'invnr':>6}  description")
+                print(f"  {'------':>6}  -----------")
+                for it in digitized:
+                    print(f"  {it['invnr']:>6}  {it['text'][:60]}")
+        print()
+        return
+
     done_file = OUTPUT_DIR / "done.txt"
     done: set[str] = set()
     if done_file.exists():
@@ -541,8 +557,11 @@ def main(invnrs: set[str] | None = None, list_invnrs: bool = False) -> None:
             continue
 
         # Phase 1: discover digitized leaf invnrs
-        invnrs = _discover_invnrs(kantoor, code)
-        digitized = [it for it in invnrs if it.get("hasScan")]
+        discovered = _discover_invnrs(kantoor, code)
+        if invnrs is not None:
+            discovered = [it for it in discovered if str(it["invnr"]) in invnrs]
+
+        digitized = [it for it in discovered if it.get("hasScan")]
         if not digitized:
             print("  No digitized inventarisnummers, skipping.")
             with open(done_file, "a") as f:
@@ -550,7 +569,7 @@ def main(invnrs: set[str] | None = None, list_invnrs: bool = False) -> None:
             continue
 
         # Phase 2: harvest tokens
-        pages = _harvest_page_tokens(kantoor, code, invnrs)
+        pages = _harvest_page_tokens(kantoor, code, discovered)
         if not pages:
             print("  No pages harvested, skipping.")
             with open(done_file, "a") as f:

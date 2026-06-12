@@ -533,16 +533,28 @@ def main(invnrs: set[str] | None = None, list_invnrs: bool = False) -> None:
             continue
 
         # Phase 2a: Discover digitized inventarisnummers
-        invnrs = _discover_invnrs(kantoor_minr)
-        digitized = [it for it in invnrs if it["hasScan"]]
+        all_items = _discover_invnrs(kantoor_minr)
+        if invnrs is not None:
+            all_items = [it for it in all_items if str(it["invnr"]) in invnrs]
+
+        digitized = [it for it in all_items if it["hasScan"]]
         if not digitized:
             print("  No digitized inventarisnummers, skipping.")
             with open(done_file, "a") as f:
                 f.write(f"{kantoor_minr}\n")
             continue
 
+        # --list-invnrs: print and skip token harvest + download
+        if list_invnrs:
+            print(f"\n{kantoor}:")
+            print(f"  {'invnr':>6}  description")
+            print(f"  {'------':>6}  -----------")
+            for it in digitized:
+                print(f"  {it['invnr']:>6}  {it['text'][:60]}")
+            continue
+
         # Phase 2b: Harvest tokens for all digitized invnrs
-        pages = _harvest_page_tokens(kantoor_minr, invnrs)
+        pages = _harvest_page_tokens(kantoor_minr, all_items)
 
         if not pages:
             print("  No pages found in this kantoor")
@@ -601,6 +613,10 @@ def main(invnrs: set[str] | None = None, list_invnrs: bool = False) -> None:
 
         with open(done_file, "a") as f:
             f.write(f"{kantoor_minr}\n")
+
+    if list_invnrs:
+        print()
+        return
 
     print(f"\n===== COMPLETE =====")
     print(f"Total: {grand_downloaded} downloaded, {grand_skipped} existing, {grand_missing} missing")

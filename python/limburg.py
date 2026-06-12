@@ -446,6 +446,28 @@ def main(invnrs: set[str] | None = None, list_invnrs: bool = False) -> None:
         print(f"\n  {code}: discovering digitized inventarisnummers …")
         inventories[code] = _harvest_inventory(code)
 
+    # --invnr filter (before expensive token harvest)
+    if invnrs is not None:
+        for code in inventories:
+            inventories[code] = [
+                it for it in inventories[code]
+                if str(it["invnr"]) in invnrs
+            ]
+        total = sum(len(v) for v in inventories.values())
+        print(f"\nFiltered to {total} items matching --invnr.")
+
+    # --list-invnrs (print table and exit, no Playwright or downloads)
+    if list_invnrs:
+        for code, items in inventories.items():
+            axis = ARCHIVE_CODES[code]["axis"]
+            print(f"\n{code} ({ARCHIVE_CODES[code]['title']}):")
+            print(f"  {'invnr':>6}  {axis:<20}  {'datering':<12}  title")
+            print(f"  {'------':>6}  {'-' * min(len(axis), 20):<20}  {'------------':<12}  -----")
+            for it in items:
+                print(f"  {it['invnr']:>6}  {it['name']:<20}  {it['datering']:<12}  {it['title'][:60]}")
+        print()
+        return
+
     # Phase 2 + 3: token harvest per digitized invnr, then download.
     # One Playwright session shared across all invnrs of a given code –
     # individual page navigations reuse the same browser context.
