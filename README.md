@@ -60,6 +60,46 @@ uv run python main.py gelderland
 
 ---
 
+## Filtering and listing inventory numbers
+
+Two flags let you scope downloads instead of pulling the entire archive:
+
+### `--list-invnrs` — see what's available
+
+Prints all digitized inventory numbers (with kantoor, description, date range, and page count where available) and exits without downloading anything.
+
+```bash
+# List all digitized invnrs for an archive
+uv run python main.py limburg --list-invnrs
+uv run python main.py gelderland --list-invnrs
+uv run python main.py drentsarchief --list-invnrs   # slow — fetches all deeds first
+```
+
+For archives with cached inventory (Limburg, Gelderland, Zeeland), this runs instantly
+without launching a browser. For others (Overijssel, Utrecht, Noord-Holland), it needs
+the Playwright token-harvest pass first — but cached tokens are reused on reruns.
+
+### `--invnr` — download a specific volume
+
+Restricts the download to one or more inventory numbers. Repeat the flag for multiple:
+
+```bash
+# Download a single register
+uv run python main.py limburg --invnr 1
+
+# Download several at once
+uv run python main.py gelderland --invnr 1 --invnr 2
+
+# Combine with --list-invnrs to preview what would be downloaded
+uv run python main.py zeeland --invnr 1 --invnr 42 --list-invnrs
+```
+
+The filter is applied as early as possible: for archives with cached inventory it
+happens before the slow Playwright token-harvest phase; for the rest it happens after
+token harvest but before downloading. Only matching invnrs are processed.
+
+---
+
 ## Pipelines in detail
 
 ### Friesland – Tresoar / AlleFriezen
