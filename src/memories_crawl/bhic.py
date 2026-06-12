@@ -30,6 +30,7 @@ Tafel V-bis
   Not present at BHIC (a register search for "tafel" returns 0). A defensive
   filter still skips any register whose naam/type contains "tafel" or "v-bis".
 """
+
 from __future__ import annotations
 
 import csv
@@ -143,8 +144,7 @@ def _write_register_metadata(dest_dir: Path, register: dict) -> None:
         "code": code,
         "register_id": register.get("id") or "",
         "url_origineel": (
-            f"https://www.bhic.nl/memorix/genealogy/search/registers/"
-            f"{register.get('id', '')}"
+            f"https://www.bhic.nl/memorix/genealogy/search/registers/{register.get('id', '')}"
         ),
     }
     dest_dir.mkdir(parents=True, exist_ok=True)
@@ -163,27 +163,31 @@ def _write_deeds_sidecar(dest_dir: Path, deeds: list[dict], persons: list[dict])
         if not deed_id:
             continue
         pmd = p.get("metadata") or {}
-        persons_by_deed.setdefault(deed_id, []).append({
-            "person_id": p.get("id"),
-            "voornaam": pmd.get("voornaam") or "",
-            "tussenvoegsel": pmd.get("tussenvoegsel") or "",
-            "geslachtsnaam": pmd.get("geslachtsnaam") or "",
-            "naam_volledig": pmd.get("person_display_name") or "",
-            "geslacht": pmd.get("geslacht") or "",
-            "datum_overlijden": pmd.get("datum_overlijden") or pmd.get("datum") or "",
-            "plaats_overlijden": pmd.get("plaats_overlijden") or pmd.get("plaats") or "",
-            "rol": pmd.get("type_title") or "",
-        })
+        persons_by_deed.setdefault(deed_id, []).append(
+            {
+                "person_id": p.get("id"),
+                "voornaam": pmd.get("voornaam") or "",
+                "tussenvoegsel": pmd.get("tussenvoegsel") or "",
+                "geslachtsnaam": pmd.get("geslachtsnaam") or "",
+                "naam_volledig": pmd.get("person_display_name") or "",
+                "geslacht": pmd.get("geslacht") or "",
+                "datum_overlijden": pmd.get("datum_overlijden") or pmd.get("datum") or "",
+                "plaats_overlijden": pmd.get("plaats_overlijden") or pmd.get("plaats") or "",
+                "rol": pmd.get("type_title") or "",
+            }
+        )
 
     out: list[dict] = []
     for d in deeds:
         dmd = d.get("metadata") or {}
-        out.append({
-            "deed_id": d.get("id"),
-            "aktenummer": dmd.get("nummer") or "",
-            "plaats": dmd.get("plaats") or "",
-            "personen": persons_by_deed.get(d.get("id") or "", []),
-        })
+        out.append(
+            {
+                "deed_id": d.get("id"),
+                "aktenummer": dmd.get("nummer") or "",
+                "plaats": dmd.get("plaats") or "",
+                "personen": persons_by_deed.get(d.get("id") or "", []),
+            }
+        )
     dest_dir.mkdir(parents=True, exist_ok=True)
     with open(sidecar, "w", encoding="utf-8") as f:
         json.dump(out, f, ensure_ascii=False, indent=2)
@@ -256,16 +260,19 @@ def _list_registers(registers: list[dict], csv_out: str | None = None) -> None:
             writer.writeheader()
             for reg in registers:
                 md = reg.get("metadata") or {}
-                writer.writerow({
-                    "invnr": md.get("inventarisnummer") or "",
-                    "gemeente": md.get("gemeente") or "",
-                    "register_name": md.get("naam") or "",
-                })
+                writer.writerow(
+                    {
+                        "invnr": md.get("inventarisnummer") or "",
+                        "gemeente": md.get("gemeente") or "",
+                        "register_name": md.get("naam") or "",
+                    }
+                )
         print(f"Wrote {len(registers)} rows to {csv_out}\n")
 
 
-def main(invnrs: set[str] | None = None, list_invnrs: bool = False,
-         csv_out: str | None = None) -> None:
+def main(
+    invnrs: set[str] | None = None, list_invnrs: bool = False, csv_out: str | None = None
+) -> None:
     session = _session()
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -275,8 +282,7 @@ def main(invnrs: set[str] | None = None, list_invnrs: bool = False,
 
     if invnrs is not None:
         registers = [
-            r for r in registers
-            if (r.get("metadata") or {}).get("inventarisnummer", "") in invnrs
+            r for r in registers if (r.get("metadata") or {}).get("inventarisnummer", "") in invnrs
         ]
         print(f"Filtered to {len(registers)} registers matching --invnr.")
 
@@ -303,42 +309,45 @@ def main(invnrs: set[str] | None = None, list_invnrs: bool = False,
             if not reg_id or reg_id in done:
                 continue
             if _is_tafel(reg):
-                writer.writerow({
-                    "register_id": reg_id, "gemeente": gemeente, "invnr": invnr,
-                    "status": "skipped_tafel", "n_scans": 0,
-                })
+                writer.writerow(
+                    {
+                        "register_id": reg_id,
+                        "gemeente": gemeente,
+                        "invnr": invnr,
+                        "status": "skipped_tafel",
+                        "n_scans": 0,
+                    }
+                )
                 progress.flush()
                 continue
 
             dest_dir = _register_dir(reg)
-            print(f"[{idx}/{len(registers)}] {gemeente} deel {invnr} → {dest_dir} …",
-                  flush=True)
+            print(f"[{idx}/{len(registers)}] {gemeente} deel {invnr} → {dest_dir} …", flush=True)
 
             _write_register_metadata(dest_dir, reg)
 
             # Pull all deeds + persons for the genealogical sidecar.
             try:
-                deeds = _paginate(
-                    session, "/deed", f"register_id:{reg_id}", "deed"
-                )
-                persons = _paginate(
-                    session, "/person", f"register_id:{reg_id}", "person"
-                )
+                deeds = _paginate(session, "/deed", f"register_id:{reg_id}", "deed")
+                persons = _paginate(session, "/person", f"register_id:{reg_id}", "person")
                 _write_deeds_sidecar(dest_dir, deeds, persons)
             except Exception as exc:
                 print(f"      WARN: deeds/persons fetch failed: {exc}", flush=True)
 
             # Page through assets and download each scan.
             try:
-                assets = _paginate(
-                    session, "/asset", f"register_id:{reg_id}", "asset"
-                )
+                assets = _paginate(session, "/asset", f"register_id:{reg_id}", "asset")
             except Exception as exc:
                 print(f"      ERROR: asset listing failed: {exc}", flush=True)
-                writer.writerow({
-                    "register_id": reg_id, "gemeente": gemeente, "invnr": invnr,
-                    "status": "asset_list_failed", "n_scans": 0,
-                })
+                writer.writerow(
+                    {
+                        "register_id": reg_id,
+                        "gemeente": gemeente,
+                        "invnr": invnr,
+                        "status": "asset_list_failed",
+                        "n_scans": 0,
+                    }
+                )
                 progress.flush()
                 continue
 
@@ -357,10 +366,15 @@ def main(invnrs: set[str] | None = None, list_invnrs: bool = False,
                 if status in ("downloaded", "exists"):
                     n_done += 1
 
-            writer.writerow({
-                "register_id": reg_id, "gemeente": gemeente, "invnr": invnr,
-                "status": "done", "n_scans": n_done,
-            })
+            writer.writerow(
+                {
+                    "register_id": reg_id,
+                    "gemeente": gemeente,
+                    "invnr": invnr,
+                    "status": "done",
+                    "n_scans": n_done,
+                }
+            )
             progress.flush()
             print(f"      ✓ {n_done} scans", flush=True)
             time.sleep(REQUEST_SLEEP)

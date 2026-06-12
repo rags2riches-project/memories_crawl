@@ -32,6 +32,7 @@ Strategy
 6. Convert thumbnail URLs to full-size (remove ?format=thumb) and download.
 7. Cache harvested page tokens per subsection minr to skip Playwright on reruns.
 """
+
 from __future__ import annotations
 
 import csv
@@ -51,22 +52,23 @@ USER_AGENT = "memories-crawl/1.0"
 # Kantoren and their archive codes (micode).
 # Subsection minr values are discovered dynamically from the inv2 tree.
 KANTOREN: dict[str, str] = {
-    "Amersfoort":        "337-2",
-    "Amerongen":         "337-1",
-    "Loenen":            "337-3",
-    "Maarssen":          "337-4",
-    "Montfoort":         "337-5",
-    "Rhenen":            "337-6",
-    "Utrecht":           "337-7",
-    "IJsselstein":       "337-10",
-    "Vianen":            "1279",
-    "Woerden":           "1274",
+    "Amersfoort": "337-2",
+    "Amerongen": "337-1",
+    "Loenen": "337-3",
+    "Maarssen": "337-4",
+    "Montfoort": "337-5",
+    "Rhenen": "337-6",
+    "Utrecht": "337-7",
+    "IJsselstein": "337-10",
+    "Vianen": "1279",
+    "Woerden": "1274",
     "Wijk bij Duurstede": "337-9",
 }
 
 # ---------------------------------------------------------------------------
 # URL builders
 # ---------------------------------------------------------------------------
+
 
 def _inv2_url(micode: str) -> str:
     return (
@@ -221,6 +223,7 @@ def _fullsize_url(thumb_url: str) -> str:
 # Caching (with incremental save for crash resilience)
 # ---------------------------------------------------------------------------
 
+
 def _get_token_cache_path(micode: str, subsection_minr: int) -> Path:
     return OUTPUT_DIR / f"tokens_{micode}_{subsection_minr}.json"
 
@@ -243,7 +246,7 @@ def _load_cached_tokens(micode: str, subsection_minr: int) -> list[dict] | None:
                     label = "complete" if path == cache_path else "partial"
                     print(f"    loaded {len(tokens)} cached tokens ({label})")
                     return tokens
-            except (json.JSONDecodeError, IOError):
+            except (OSError, json.JSONDecodeError):
                 pass
     return None
 
@@ -299,7 +302,6 @@ def _harvest_page_tokens(micode: str, subsection_minr: int) -> list[dict]:
     # Check for partial cache (resume from interruption)
     pages: list[dict] = []
     seen_keys: set[tuple[int, int]] = set()
-    start_from: int = 0
     # Track which invnr+page we've already collected so we can skip
     completed_invnrs: set[int] = set()
 
@@ -310,9 +312,10 @@ def _harvest_page_tokens(micode: str, subsection_minr: int) -> list[dict]:
             seen_keys.add((p["invnr"], p["page"]))
         # Count unique invnrs already processed
         completed_invnrs = {p["invnr"] for p in pages}
-        start_from = 0  # We'll skip items whose invnrs are already in the cache
-        print(f"    resuming from {len(pages)} already-collected pages "
-              f"({len(completed_invnrs)} invnrs)")
+        print(
+            f"    resuming from {len(pages)} already-collected pages "
+            f"({len(completed_invnrs)} invnrs)"
+        )
 
     from playwright.sync_api import sync_playwright  # noqa: PLC0415
 
@@ -329,16 +332,12 @@ def _harvest_page_tokens(micode: str, subsection_minr: int) -> list[dict]:
         print(f"    found {len(stk3_items)} stk3 child items")
 
         # Filter out items whose invnrs are already fully collected
-        items_to_process = [
-            item for item in stk3_items
-            if item["invnr"] not in completed_invnrs
-        ]
+        items_to_process = [item for item in stk3_items if item["invnr"] not in completed_invnrs]
         skipped_count = len(stk3_items) - len(items_to_process)
         if skipped_count > 0:
             print(f"    skipping {skipped_count} already-collected items")
 
         for idx, item in enumerate(items_to_process):
-            invnr = item["invnr"]
             inv_text = item["text"]
             args_str = item["args"]
 
@@ -352,7 +351,7 @@ def _harvest_page_tokens(micode: str, subsection_minr: int) -> list[dict]:
 
             if new_ids:
                 strip_id = next(iter(new_ids))
-                total = page.evaluate(_JS_FORCE_LOAD_STRIP, strip_id)
+                page.evaluate(_JS_FORCE_LOAD_STRIP, strip_id)
                 for _ in range(120):
                     if page.evaluate(_JS_STRIP_LOADED, strip_id):
                         break
@@ -376,8 +375,9 @@ def _harvest_page_tokens(micode: str, subsection_minr: int) -> list[dict]:
             is_last = batch_idx == len(items_to_process)
             if batch_idx % 25 == 0 or is_last:
                 processed = len(completed_invnrs) + batch_idx
-                print(f"    processed {processed}/{len(stk3_items)} items, "
-                      f"{len(pages)} pages so far")
+                print(
+                    f"    processed {processed}/{len(stk3_items)} items, {len(pages)} pages so far"
+                )
                 _save_partial_cache(micode, subsection_minr, pages)
 
         browser.close()
@@ -390,6 +390,7 @@ def _harvest_page_tokens(micode: str, subsection_minr: int) -> list[dict]:
 # ---------------------------------------------------------------------------
 # Subsection discovery
 # ---------------------------------------------------------------------------
+
 
 def _discover_subsections(micode: str) -> list[dict]:
     """Navigate to inv2 page and discover MvS subsections.
@@ -406,10 +407,10 @@ def _discover_subsections(micode: str) -> list[dict]:
         page = context.new_page()
         page.goto(url, wait_until="networkidle", timeout=60_000)
 
-        expanded = page.evaluate(_JS_EXPAND_TREE)
+        page.evaluate(_JS_EXPAND_TREE)
         page.wait_for_timeout(4_000)
 
-        expanded2 = page.evaluate(_JS_EXPAND_TREE)
+        page.evaluate(_JS_EXPAND_TREE)
         page.wait_for_timeout(4_000)
 
         subsections: list[dict] = page.evaluate(_JS_SUBSECTIONS)
@@ -421,6 +422,7 @@ def _discover_subsections(micode: str) -> list[dict]:
 # ---------------------------------------------------------------------------
 # Download helpers
 # ---------------------------------------------------------------------------
+
 
 def _download_file(session: requests.Session, url: str, dest: Path) -> str:
     if dest.exists() and dest.stat().st_size > 0:
@@ -458,8 +460,10 @@ def _write_metadata(
 # Main
 # ---------------------------------------------------------------------------
 
-def main(invnrs: set[str] | None = None, list_invnrs: bool = False,
-         csv_out: str | None = None) -> None:
+
+def main(
+    invnrs: set[str] | None = None, list_invnrs: bool = False, csv_out: str | None = None
+) -> None:
     session = requests.Session()
     session.headers["User-Agent"] = USER_AGENT
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -467,9 +471,9 @@ def main(invnrs: set[str] | None = None, list_invnrs: bool = False,
     csv_rows: list[dict] = []
 
     for kantoor, micode in KANTOREN.items():
-        print(f"\n{'='*60}")
+        print(f"\n{'=' * 60}")
         print(f"  {kantoor} (micode={micode})")
-        print(f"{'='*60}")
+        print(f"{'=' * 60}")
 
         # Step 1: Discover subsections
         print("  Discovering subsections …")
@@ -487,8 +491,10 @@ def main(invnrs: set[str] | None = None, list_invnrs: bool = False,
 
         for section_idx, section in enumerate(subsections):
             section_minr = section["minr"]
-            print(f"\n  --- Section {section_idx + 1}/{len(subsections)} "
-                  f"(minr={section_minr}): {section['text'][:80]} ---")
+            print(
+                f"\n  --- Section {section_idx + 1}/{len(subsections)} "
+                f"(minr={section_minr}): {section['text'][:80]} ---"
+            )
 
             # Step 2: Harvest all page tokens for this subsection
             pages = _harvest_page_tokens(micode, section_minr)
@@ -510,8 +516,7 @@ def main(invnrs: set[str] | None = None, list_invnrs: bool = False,
             # --invnr filter before download
             if invnrs is not None:
                 invnr_pages = {
-                    invnr: ips for invnr, ips in invnr_pages.items()
-                    if str(invnr) in invnrs
+                    invnr: ips for invnr, ips in invnr_pages.items() if str(invnr) in invnrs
                 }
                 invnr_texts = {invnr: invnr_texts[invnr] for invnr in invnr_pages}
 
@@ -523,13 +528,15 @@ def main(invnrs: set[str] | None = None, list_invnrs: bool = False,
                 for invnr in sorted(invnr_pages.keys()):
                     desc = invnr_texts.get(invnr, "")[:30]
                     print(f"    {invnr:>6}  {desc:<30}  {len(invnr_pages[invnr]):>5}")
-                    csv_rows.append({
-                        "kantoor": kantoor,
-                        "section": section["text"][:60],
-                        "invnr": invnr,
-                        "description": invnr_texts.get(invnr, ""),
-                        "pages": len(invnr_pages[invnr]),
-                    })
+                    csv_rows.append(
+                        {
+                            "kantoor": kantoor,
+                            "section": section["text"][:60],
+                            "invnr": invnr,
+                            "description": invnr_texts.get(invnr, ""),
+                            "pages": len(invnr_pages[invnr]),
+                        }
+                    )
                 continue
 
             downloaded = skipped = missing = 0
@@ -558,8 +565,10 @@ def main(invnrs: set[str] | None = None, list_invnrs: bool = False,
                         inv_missing += 1
                     time.sleep(0.15)
 
-                print(f"{len(inv_pages)} pages "
-                      f"({inv_downloaded} new, {inv_skipped} existing, {inv_missing} missing)")
+                print(
+                    f"{len(inv_pages)} pages "
+                    f"({inv_downloaded} new, {inv_skipped} existing, {inv_missing} missing)"
+                )
 
                 with open(done_file, "a") as f:
                     f.write(key + "\n")

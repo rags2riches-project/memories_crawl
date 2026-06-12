@@ -27,6 +27,7 @@ Tafel V-bis
 ───────────
   Not present at Tresoar (0 results for "tafel" or "v-bis"). No filter needed.
 """
+
 from __future__ import annotations
 
 import csv
@@ -220,16 +221,19 @@ def _list_registers(registers: list[dict], csv_out: str | None = None) -> None:
             writer.writeheader()
             for reg in registers:
                 rmd = reg.get("metadata") or {}
-                writer.writerow({
-                    "invnr": rmd.get("inventarisnummer") or "",
-                    "kantoor": _kantoor_from_register(reg),
-                    "register_name": rmd.get("naam") or "",
-                })
+                writer.writerow(
+                    {
+                        "invnr": rmd.get("inventarisnummer") or "",
+                        "kantoor": _kantoor_from_register(reg),
+                        "register_name": rmd.get("naam") or "",
+                    }
+                )
         print(f"Wrote {len(registers)} rows to {csv_out}\n")
 
 
-def main(invnrs: set[str] | None = None, list_invnrs: bool = False,
-         csv_out: str | None = None) -> None:
+def main(
+    invnrs: set[str] | None = None, list_invnrs: bool = False, csv_out: str | None = None
+) -> None:
     session = _session()
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -239,8 +243,7 @@ def main(invnrs: set[str] | None = None, list_invnrs: bool = False,
 
     if invnrs is not None:
         registers = [
-            r for r in registers
-            if (r.get("metadata") or {}).get("inventarisnummer", "") in invnrs
+            r for r in registers if (r.get("metadata") or {}).get("inventarisnummer", "") in invnrs
         ]
         print(f"Filtered to {len(registers)} registers matching --invnr.")
 
@@ -279,10 +282,15 @@ def main(invnrs: set[str] | None = None, list_invnrs: bool = False,
                 persons = _paginate(session, "/person", f"register_id:{reg_id}", "person")
             except Exception as exc:
                 print(f"      ERROR: fetch failed: {exc}", flush=True)
-                writer.writerow({
-                    "register_id": reg_id, "kantoor": kantoor, "invnr": invnr,
-                    "status": "fetch_failed", "n_persons": 0,
-                })
+                writer.writerow(
+                    {
+                        "register_id": reg_id,
+                        "kantoor": kantoor,
+                        "invnr": invnr,
+                        "status": "fetch_failed",
+                        "n_persons": 0,
+                    }
+                )
                 progress.flush()
                 continue
 
@@ -302,9 +310,7 @@ def main(invnrs: set[str] | None = None, list_invnrs: bool = False,
                     continue
 
                 slug = _person_slug(person)
-                dest_dir = (
-                    OUTPUT_DIR / _sanitize(kantoor) / _sanitize(invnr) / slug
-                )
+                dest_dir = OUTPUT_DIR / _sanitize(kantoor) / _sanitize(invnr) / slug
 
                 # Download scan pages from the deed's embedded assets.
                 assets = deed.get("asset") or []
@@ -324,10 +330,15 @@ def main(invnrs: set[str] | None = None, list_invnrs: bool = False,
                 _write_person_metadata(dest_dir, person, deed, reg, n_done)
                 n_persons += 1
 
-            writer.writerow({
-                "register_id": reg_id, "kantoor": kantoor, "invnr": invnr,
-                "status": "done", "n_persons": n_persons,
-            })
+            writer.writerow(
+                {
+                    "register_id": reg_id,
+                    "kantoor": kantoor,
+                    "invnr": invnr,
+                    "status": "done",
+                    "n_persons": n_persons,
+                }
+            )
             progress.flush()
             print(f"      {n_persons} persons", flush=True)
             time.sleep(REQUEST_SLEEP)

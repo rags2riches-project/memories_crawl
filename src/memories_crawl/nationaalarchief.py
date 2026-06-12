@@ -12,6 +12,7 @@ For each inventory number:
   2. Parse the scans array from viewer.response.
   3. Download each scan via default.url → https://service.archief.nl/api/file/v1/default/{UUID}
 """
+
 from __future__ import annotations
 
 import csv
@@ -39,28 +40,28 @@ ARCHIVE_NAME = "Nationaal Archief"
 # excluding Tafel V-bis and Tafel VI, derived from the EAD XML (July 2022 edition).
 # Covers all 21 kantoren; gaps in the sequence are the excluded Tafel items.
 _FALLBACK_INVNR_RANGES: list[tuple[int, int]] = [
-    (2276, 2450),   # Kantoor Alphen aan de Rijn (2.4.01)
-    (2469, 2534),   # Kantoor Brielle (2.4.02)
-    (2551, 2752),   # Kantoor Delft (2.4.03)
-    (2798, 2964),   # Kantoor Dordrecht (2.4.04)
-    (3005, 3180),   # Kantoor Gorinchem (2.4.05)
-    (3201, 3412),   # Kantoor Gouda (2.4.06)
-    (3468, 3889),   # Kantoor 's-Gravenhage (2.4.07) part 1 (excl. Tafel V-bis 3897-3943)
-    (3944, 3946),   # Kantoor 's-Gravenhage part 2 (excl. Tafel VI 3947-4028)
-    (4029, 4238),   # Kantoor Leiden (2.4.09)
-    (4265, 4431),   # Kantoor Noordwijk (2.4.10)
-    (4444, 4560),   # Kantoor Oud-Beijerland (2.4.11)
-    (4585, 4723),   # Kantoor Rotterdam (2.4.12) part 1 (excl. Tafel 6 / V-bis 4724-…)
-    (4962, 5088),   # Kantoor Schiedam (2.4.13)
-    (5124, 5292),   # Kantoor Schoonhoven (2.4.14) + Sliedrecht/Papendrecht (2.4.15)
-    (5310, 5414),   # Kantoor Sommelsdijk/Middelharnis/Dirksland (2.4.16)
-    (5501, 5508),   # Kantoor Vlaardingen (2.4.18)
-    (5611, 5740),   # Kantoor Woubrugge (2.4.20) + IJsselmonde (2.4.21) part 1
-    (5744, 5810),   # Kantoor IJsselmonde part 2 (excl. Tafel V-bis 5741-5743)
-    (5815, 5816),   # Kantoor IJsselmonde part 3
-    (5819, 7021),   # Kantoor Rotterdam (2.4.12) part 2 + Hillegersberg (2.4.08) + others
-    (7106, 7139),   # Various kantoren (Tafel V-bis tails excluded)
-    (7212, 7268),   # Various kantoren (tail)
+    (2276, 2450),  # Kantoor Alphen aan de Rijn (2.4.01)
+    (2469, 2534),  # Kantoor Brielle (2.4.02)
+    (2551, 2752),  # Kantoor Delft (2.4.03)
+    (2798, 2964),  # Kantoor Dordrecht (2.4.04)
+    (3005, 3180),  # Kantoor Gorinchem (2.4.05)
+    (3201, 3412),  # Kantoor Gouda (2.4.06)
+    (3468, 3889),  # Kantoor 's-Gravenhage (2.4.07) part 1 (excl. Tafel V-bis 3897-3943)
+    (3944, 3946),  # Kantoor 's-Gravenhage part 2 (excl. Tafel VI 3947-4028)
+    (4029, 4238),  # Kantoor Leiden (2.4.09)
+    (4265, 4431),  # Kantoor Noordwijk (2.4.10)
+    (4444, 4560),  # Kantoor Oud-Beijerland (2.4.11)
+    (4585, 4723),  # Kantoor Rotterdam (2.4.12) part 1 (excl. Tafel 6 / V-bis 4724-…)
+    (4962, 5088),  # Kantoor Schiedam (2.4.13)
+    (5124, 5292),  # Kantoor Schoonhoven (2.4.14) + Sliedrecht/Papendrecht (2.4.15)
+    (5310, 5414),  # Kantoor Sommelsdijk/Middelharnis/Dirksland (2.4.16)
+    (5501, 5508),  # Kantoor Vlaardingen (2.4.18)
+    (5611, 5740),  # Kantoor Woubrugge (2.4.20) + IJsselmonde (2.4.21) part 1
+    (5744, 5810),  # Kantoor IJsselmonde part 2 (excl. Tafel V-bis 5741-5743)
+    (5815, 5816),  # Kantoor IJsselmonde part 3
+    (5819, 7021),  # Kantoor Rotterdam (2.4.12) part 2 + Hillegersberg (2.4.08) + others
+    (7106, 7139),  # Various kantoren (Tafel V-bis tails excluded)
+    (7212, 7268),  # Various kantoren (tail)
 ]
 
 
@@ -73,19 +74,20 @@ def _session() -> requests.Session:
 def _get_children(elem: ET.Element) -> list[ET.Element]:
     """Return child component elements (c, c01-c06, …)."""
     return [
-        c for c in elem
-        if c.tag == 'c' or (c.tag.startswith('c') and len(c.tag) <= 3 and c.tag[1:].isdigit())
+        c
+        for c in elem
+        if c.tag == "c" or (c.tag.startswith("c") and len(c.tag) <= 3 and c.tag[1:].isdigit())
     ]
 
 
 def _get_unitid(elem: ET.Element) -> str:
-    e = elem.find('did/unitid')
-    return e.text.strip() if e is not None and e.text else ''
+    e = elem.find("did/unitid")
+    return e.text.strip() if e is not None and e.text else ""
 
 
 def _get_unittitle(elem: ET.Element) -> str:
-    e = elem.find('did/unittitle')
-    return e.text.strip() if e is not None and e.text else ''
+    e = elem.find("did/unittitle")
+    return e.text.strip() if e is not None and e.text else ""
 
 
 def _collect_leaf_invnrs(elem: ET.Element) -> list[int]:
@@ -108,18 +110,16 @@ def _parse_ead_invnrs(xml_bytes: bytes) -> list[int]:
     Excludes Tafel V-bis and Tafel VI subsections.
     """
     root = ET.fromstring(xml_bytes)
-    dsc = root.find('.//dsc')
+    dsc = root.find(".//dsc")
     if dsc is None:
         return []
 
     top_level = _get_children(dsc)
-    section2 = next((s for s in top_level if _get_unitid(s) == '2'), None)
+    section2 = next((s for s in top_level if _get_unitid(s) == "2"), None)
     if section2 is None:
         return []
 
-    section24 = next(
-        (s for s in _get_children(section2) if _get_unitid(s) == '2.4'), None
-    )
+    section24 = next((s for s in _get_children(section2) if _get_unitid(s) == "2.4"), None)
     if section24 is None:
         return []
 
@@ -151,12 +151,12 @@ def _parse_ead_invnrs(xml_bytes: bytes) -> list[int]:
 def _is_excluded_subsection(title_lower: str) -> bool:
     """Return True for Tafel V-bis and Tafel VI subsections."""
     return (
-        'tafel v-bis' in title_lower
-        or 'tafels v-bis' in title_lower
-        or 'v-bis' in title_lower
-        or 'tafel vi' in title_lower
-        or 'tafels vi' in title_lower
-        or 'tafel 6' in title_lower
+        "tafel v-bis" in title_lower
+        or "tafels v-bis" in title_lower
+        or "v-bis" in title_lower
+        or "tafel vi" in title_lower
+        or "tafels vi" in title_lower
+        or "tafel 6" in title_lower
     )
 
 
@@ -218,7 +218,10 @@ def _download_file(session: requests.Session, url: str, dest: Path, retries: int
         if resp.status_code == 404:
             return "missing"
         if resp.status_code in (502, 503, 504) and attempt < retries - 1:
-            print(f"    {resp.status_code} on attempt {attempt + 1}, retrying in {delay}s …", flush=True)
+            print(
+                f"    {resp.status_code} on attempt {attempt + 1}, retrying in {delay}s …",
+                flush=True,
+            )
             time.sleep(delay)
             delay *= 2
             continue
@@ -237,7 +240,7 @@ def _write_metadata(dest_dir: Path, invnr: int, html: str, scans: list[dict]) ->
     sidecar = dest_dir / "metadata.json"
     if sidecar.exists():
         return
-    period_match = re.search(r'<h1[^>]*>([^<]+)</h1>', html)
+    period_match = re.search(r"<h1[^>]*>([^<]+)</h1>", html)
     period = period_match.group(1).strip() if period_match else ""
     meta = {
         "archief_naam": ARCHIVE_NAME,
@@ -287,8 +290,9 @@ def _list_inventory(inv_numbers: list[int], csv_out: str | None = None) -> None:
         print(f"Wrote {len(inv_numbers)} rows to {csv_out}\n")
 
 
-def main(invnrs: set[str] | None = None, list_invnrs: bool = False,
-         csv_out: str | None = None) -> None:
+def main(
+    invnrs: set[str] | None = None, list_invnrs: bool = False, csv_out: str | None = None
+) -> None:
     session = _session()
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -345,9 +349,7 @@ def main(invnrs: set[str] | None = None, list_invnrs: bool = False,
             if not download_url:
                 scan_id = scan.get("id") or scan.get("uuid") or ""
                 if scan_id:
-                    download_url = (
-                        f"https://service.archief.nl/api/file/v1/default/{scan_id}"
-                    )
+                    download_url = f"https://service.archief.nl/api/file/v1/default/{scan_id}"
             if not download_url:
                 continue
             dest = dest_dir / label

@@ -36,6 +36,7 @@ Strategy
 
 Dependency: ``uv sync && uv run playwright install chromium``.
 """
+
 from __future__ import annotations
 
 import csv
@@ -236,6 +237,7 @@ def _fullsize_url(thumb_url: str) -> str:
 # Caching
 # ---------------------------------------------------------------------------
 
+
 def _token_cache_path(kantoor_minr: int) -> Path:
     return OUTPUT_DIR / f"tokens_minr_{kantoor_minr}.json"
 
@@ -339,6 +341,7 @@ def _discover_kantoren() -> list[dict]:
 # Phase 2: Discover invnrs + harvest tokens per kantoor
 # ---------------------------------------------------------------------------
 
+
 def _discover_invnrs(kantoor_minr: int) -> list[dict]:
     """Return [{invnr, text, minr, hasScan}, ...] for one kantoor."""
     from playwright.sync_api import sync_playwright  # noqa: PLC0415
@@ -350,7 +353,7 @@ def _discover_invnrs(kantoor_minr: int) -> list[dict]:
 
         url = _inv3_url(kantoor_minr)
         page.goto(url, wait_until="networkidle", timeout=60_000)
-        page.wait_for_selector('a[onclick]', state="attached", timeout=30_000)
+        page.wait_for_selector("a[onclick]", state="attached", timeout=30_000)
 
         # Expand all sub-sections
         total_expanded = 0
@@ -392,8 +395,10 @@ def _harvest_page_tokens(kantoor_minr: int, invnrs: list[dict]) -> list[dict]:
         for p in pages:
             seen_keys.add((p["invnr"], p.get("slug", ""), p["page"]))
         completed_invnrs = {p["invnr"] for p in pages}
-        print(f"    resuming from {len(pages)} already-collected pages "
-              f"({len(completed_invnrs)} invnrs)")
+        print(
+            f"    resuming from {len(pages)} already-collected pages "
+            f"({len(completed_invnrs)} invnrs)"
+        )
 
     # Only process digitized, not-yet-completed invnrs
     digitized = [it for it in invnrs if it["hasScan"] and it["invnr"] not in completed_invnrs]
@@ -411,8 +416,11 @@ def _harvest_page_tokens(kantoor_minr: int, invnrs: list[dict]) -> list[dict]:
             invnr = it["invnr"]
             invnr_minr = it["minr"]
             inv_text = it["text"]
-            print(f"    [{idx + 1}/{len(digitized)}] invnr {invnr} "
-                  f"({inv_text[:60].strip()} …)", end=" ", flush=True)
+            print(
+                f"    [{idx + 1}/{len(digitized)}] invnr {invnr} ({inv_text[:60].strip()} …)",
+                end=" ",
+                flush=True,
+            )
 
             url = _inv2_minr_url(invnr_minr)
             page.goto(url, wait_until="networkidle", timeout=60_000)
@@ -421,7 +429,7 @@ def _harvest_page_tokens(kantoor_minr: int, invnrs: list[dict]) -> list[dict]:
             # Force-load all strip chunks
             fl = page.evaluate(_JS_STRIP_FORCE_LOAD)
             if not fl["total"]:
-                print(f"0 pages")
+                print("0 pages")
                 continue
 
             for _ in range(60):
@@ -456,6 +464,7 @@ def _harvest_page_tokens(kantoor_minr: int, invnrs: list[dict]) -> list[dict]:
 # ---------------------------------------------------------------------------
 # Phase 3: Download scans
 # ---------------------------------------------------------------------------
+
 
 def _download_file(session: requests.Session, url: str, dest: Path) -> str:
     if dest.exists() and dest.stat().st_size > 0:
@@ -495,8 +504,10 @@ def _write_metadata(
 # Main
 # ---------------------------------------------------------------------------
 
-def main(invnrs: set[str] | None = None, list_invnrs: bool = False,
-         csv_out: str | None = None) -> None:
+
+def main(
+    invnrs: set[str] | None = None, list_invnrs: bool = False, csv_out: str | None = None
+) -> None:
     session = requests.Session()
     session.headers["User-Agent"] = USER_AGENT
     session.headers["Referer"] = "https://www.zeeuwsarchief.nl/"
@@ -511,9 +522,9 @@ def main(invnrs: set[str] | None = None, list_invnrs: bool = False,
         print("ERROR: no kantoren found. The tree structure may have changed.")
         return
 
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print(f"Processing {len(kantoren)} kantoren")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
 
     done_file = OUTPUT_DIR / "done.txt"
     done: set[str] = set()
@@ -526,10 +537,10 @@ def main(invnrs: set[str] | None = None, list_invnrs: bool = False,
         kantoor = k_data["name"]
         kantoor_minr = k_data["minr"]
 
-        print(f"\n{'='*60}")
+        print(f"\n{'=' * 60}")
         print(f"  [{k_idx + 1}/{len(kantoren)}] {kantoor}")
         print(f"  kantoor_minr={kantoor_minr}")
-        print(f"{'='*60}")
+        print(f"{'=' * 60}")
 
         if str(kantoor_minr) in done:
             print("  Already fully downloaded, skipping.")
@@ -554,11 +565,13 @@ def main(invnrs: set[str] | None = None, list_invnrs: bool = False,
             print(f"  {'------':>6}  -----------")
             for it in digitized:
                 print(f"  {it['invnr']:>6}  {it['text'][:60]}")
-                csv_rows.append({
-                    "kantoor": kantoor,
-                    "invnr": it["invnr"],
-                    "description": it["text"],
-                })
+                csv_rows.append(
+                    {
+                        "kantoor": kantoor,
+                        "invnr": it["invnr"],
+                        "description": it["text"],
+                    }
+                )
             continue
 
         # Phase 2b: Harvest tokens for all digitized invnrs
@@ -606,8 +619,10 @@ def main(invnrs: set[str] | None = None, list_invnrs: bool = False,
                     inv_missing += 1
                 time.sleep(0.15)
 
-            print(f"{len(inv_pages)} pages "
-                  f"({inv_downloaded} new, {inv_skipped} existing, {inv_missing} missing)")
+            print(
+                f"{len(inv_pages)} pages "
+                f"({inv_downloaded} new, {inv_skipped} existing, {inv_missing} missing)"
+            )
 
             downloaded += inv_downloaded
             skipped += inv_skipped
@@ -632,8 +647,10 @@ def main(invnrs: set[str] | None = None, list_invnrs: bool = False,
             print(f"Wrote {len(csv_rows)} rows to {csv_out}\n")
         return
 
-    print(f"\n===== COMPLETE =====")
-    print(f"Total: {grand_downloaded} downloaded, {grand_skipped} existing, {grand_missing} missing")
+    print("\n===== COMPLETE =====")
+    print(
+        f"Total: {grand_downloaded} downloaded, {grand_skipped} existing, {grand_missing} missing"
+    )
     print("Done (Zeeland).")
 
 

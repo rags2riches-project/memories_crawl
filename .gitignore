@@ -5,4 +5,5 @@ scans/
 dumps/
 *.csv
 *.txt
+dist/
 .venv/

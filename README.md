@@ -31,31 +31,42 @@ The registers are organised by fiscal district (*kantoor*) and contain individua
 
 New to this project? [GUIDE.md](GUIDE.md) explains what these scripts do, why they're needed, and how the archives work — in plain terms, no technical background assumed.
 
-## Quick start
-
-**Requirements**: Python >= 3.14, [uv](https://docs.astral.sh/uv/).
+## Install
 
 ```bash
-# Install dependencies
-uv sync
+pip install memories-crawl
+```
 
+Or for development with [uv](https://docs.astral.sh/uv/):
+
+```bash
+git clone https://github.com/bas/memories_crawl.git
+cd memories_crawl
+uv sync
+```
+
+## Quick start
+
+**Requirements**: Python >= 3.12.
+
+```bash
 # First-time MAIS/Playwright setup (Gelderland, Overijssel, Utrecht, Limburg, Noord-Holland, Zeeland)
 uv run playwright install chromium
 
 # Download all archives (takes several hours)
-uv run python main.py all
+memories-crawl all
 
 # Or run one archive at a time
-uv run python main.py friesland
-uv run python main.py nationaalarchief
-uv run python main.py drentsarchief
-uv run python main.py bhic
-uv run python main.py overijssel
-uv run python main.py utrechtsarchief
-uv run python main.py limburg
-uv run python main.py noordholland
-uv run python main.py zeeland
-uv run python main.py gelderland
+memories-crawl friesland
+memories-crawl nationaalarchief
+memories-crawl drentsarchief
+memories-crawl bhic
+memories-crawl overijssel
+memories-crawl utrechtsarchief
+memories-crawl limburg
+memories-crawl noordholland
+memories-crawl zeeland
+memories-crawl gelderland
 ```
 
 ---
@@ -70,9 +81,9 @@ Prints all digitized inventory numbers (with kantoor, description, date range, a
 
 ```bash
 # List all digitized invnrs for an archive
-uv run python main.py limburg --list-invnrs
-uv run python main.py gelderland --list-invnrs
-uv run python main.py drentsarchief --list-invnrs   # slow — fetches all deeds first
+uv run memories-crawl limburg --list-invnrs
+uv run memories-crawl gelderland --list-invnrs
+uv run memories-crawl drentsarchief --list-invnrs   # slow — fetches all deeds first
 ```
 
 For archives with cached inventory (Limburg, Gelderland, Zeeland), this runs instantly
@@ -87,10 +98,10 @@ is still shown.
 
 ```bash
 # Default filename: {pipeline}_invnrs.csv
-uv run python main.py zeeland --list-invnrs --csv
+uv run memories-crawl zeeland --list-invnrs --csv
 
 # Custom filename
-uv run python main.py gelderland --list-invnrs --csv my-output.csv
+uv run memories-crawl gelderland --list-invnrs --csv my-output.csv
 ```
 
 | Archive | CSV columns |
@@ -112,13 +123,13 @@ Restricts the download to one or more inventory numbers. Repeat the flag for mul
 
 ```bash
 # Download a single register
-uv run python main.py limburg --invnr 1
+uv run memories-crawl limburg --invnr 1
 
 # Download several at once
-uv run python main.py gelderland --invnr 1 --invnr 2
+uv run memories-crawl gelderland --invnr 1 --invnr 2
 
 # Combine with --list-invnrs to preview what would be downloaded
-uv run python main.py zeeland --invnr 1 --invnr 42 --list-invnrs
+uv run memories-crawl zeeland --invnr 1 --invnr 42 --list-invnrs
 ```
 
 The filter is applied as early as possible: for archives with cached inventory it
@@ -131,8 +142,8 @@ token harvest but before downloading. Only matching invnrs are processed.
 
 ### Friesland – Tresoar / AlleFriezen
 
-`uv run python main.py friesland`
-Source file: `python/friesland.py`
+`uv run memories-crawl friesland`
+Source file: `src/memories_crawl/friesland.py`
 
 Uses Tresoar's **Memorix genealogy REST API** via the AlleFriezen tenant key
 (`aa030ec4-12d0-4dc0-afaf-b65fd6128b39`).
@@ -151,8 +162,8 @@ Output: `scans/friesland/{kantoor}/{invnr}/{person_slug}/`.
 
 ### Gelderland – Gelders Archief
 
-`uv run python main.py gelderland`
-Source file: `python/gelderland.py`
+`uv run memories-crawl gelderland`
+Source file: `src/memories_crawl/gelderland.py`
 
 Uses the **MAIS Internet viewer** (`miadt=37`, `mivast=37`) on the `geldersarchief.nl` domain. Unlike other MAIS instances, the Gelders Archief gives **each kantoor its own archive code** (micode). 21 kantoren are configured with codes 0021–0037, 0092, 0221–0223.
 
@@ -178,8 +189,8 @@ Inventory and token caches (`inventory_{code}.json`, `tokens_{code}.json` with p
 
 ### Nationaal Archief – Zuid-Holland
 
-`uv run python main.py nationaalarchief`
-Source file: `python/nationaalarchief.py`
+`uv run memories-crawl nationaalarchief`
+Source file: `src/memories_crawl/nationaalarchief.py`
 
 Access number **3.06.05**. The pipeline:
 1. Fetches the EAD XML inventory (`/download/xml`) and parses section 2.4 for Memories invnrs, excluding Tafel V-bis and Tafel VI. Falls back to a hardcoded range list if the download fails.
@@ -193,8 +204,8 @@ Output: `scans/nationaalarchief/{invnr}/`.
 
 ### Drents Archief
 
-`uv run python main.py drentsarchief`
-Source file: `python/drentsarchief.py`
+`uv run memories-crawl drentsarchief`
+Source file: `src/memories_crawl/drentsarchief.py`
 
 Uses the **Memorix genealogy REST API** at `webservices.memorix.nl/genealogy` (~106,000 deeds total).
 
@@ -209,8 +220,8 @@ Output: `scans/drentsarchief/{deed_id}/`.
 
 ### BHIC – Brabants Historisch Informatie Centrum (Noord-Brabant)
 
-`uv run python main.py bhic`
-Source file: `python/bhic.py`
+`uv run memories-crawl bhic`
+Source file: `src/memories_crawl/bhic.py`
 
 Uses the **same Memorix backend** as Drenthe but with a different tenant key
 (`24c66d08-da4a-4d60-917f-5942681dcaa1`). Crucially, BHIC's scans live at the
@@ -231,8 +242,8 @@ Output: `scans/bhic/{gemeente}/deel_{invnr}/`.
 
 ### Limburg – Regionaal Historisch Centrum Limburg (RHCL)
 
-`uv run python main.py limburg`
-Source file: `python/limburg.py`
+`uv run memories-crawl limburg`
+Source file: `src/memories_crawl/limburg.py`
 
 Uses the **MAIS Internet viewer on archieven.nl** (`miadt=38`, `mivast=0`). Covers two archive codes:
 
@@ -255,8 +266,8 @@ Inventory and token caches (`scans/limburg/inventory_{code}.json`, `scans/limbur
 
 ### Overijssel – Historisch Centrum Overijssel
 
-`uv run python main.py overijssel`
-Source file: `python/overijssel.py`
+`uv run memories-crawl overijssel`
+Source file: `src/memories_crawl/overijssel.py`
 
 The HCO uses a MAIS Internet viewer where scan images require per-page authentication tokens (`miahd`, `rdt`, `open`) injected by the browser-side JavaScript. These cannot be retrieved with plain HTTP requests.
 
@@ -277,8 +288,8 @@ Covers all 10 kantoren: Almelo, Deventer, Enschede, Goor, Kampen, Ommen, Raalte,
 
 ### Utrechts Archief – Het Utrechts Archief (HUA)
 
-`uv run python main.py utrechtsarchief`
-Source file: `python/utrechtsarchief.py`
+`uv run memories-crawl utrechtsarchief`
+Source file: `src/memories_crawl/utrechtsarchief.py`
 
 The HUA also uses a MAIS Internet viewer (`miadt=39`, `mivast=39`). The pipeline uses **Playwright/Chromium** with the same stk3 inline toggle approach as Overijssel:
 
@@ -301,8 +312,8 @@ Covers all 11 kantoren: Amersfoort, Amerongen, Loenen, Maarssen, Montfoort, Rhen
 
 ### Noord-Holland – Noord-Hollands Archief (NHA)
 
-`uv run python main.py noordholland`
-Source file: `python/noordholland.py`
+`uv run memories-crawl noordholland`
+Source file: `src/memories_crawl/noordholland.py`
 
 Uses the **MAIS Internet viewer** (`miadt=236`, `mivast=236`, archive code 178) on the `noord-hollandsarchief.nl` domain. The pipeline uses **Playwright/Chromium** with the same stk3 inline toggle approach as Overijssel and Utrecht:
 
@@ -319,8 +330,8 @@ Token results are cached per period minr in `scans/noordholland/tokens_{minr}.js
 
 ### Zeeland – Zeeuws Archief
 
-`uv run python main.py zeeland`
-Source file: `python/zeeland.py`
+`uv run memories-crawl zeeland`
+Source file: `src/memories_crawl/zeeland.py`
 
 Uses the **MAIS Internet viewer** (`miadt=239`, `mivast=239`) on the `zeeuwsarchief.nl` domain. The archive is identified by `micode=398` ("Ontvangers der Successierechten in Zeeland, (1795) 1806-1927"). The pipeline uses **Playwright/Chromium** with the same stk3 inline toggle approach as Overijssel, Utrecht, and Noord-Holland:
 

@@ -7,34 +7,34 @@ Downloads all surviving *Memories van Successie* (Dutch succession/inheritance r
 ## How to run
 
 ```bash
-uv run python main.py friesland          # Friesland (Tresoar / AlleFriezen, Memorix API)
-uv run python main.py nationaalarchief   # Zuid-Holland (Nationaal Archief 3.06.05)
-uv run python main.py drentsarchief      # Drenthe (Memorix API)
-uv run python main.py bhic               # Noord-Brabant (BHIC Memorix API)
-uv run python main.py overijssel         # Overijssel (HCO) – requires Playwright
-uv run python main.py utrechtsarchief    # Utrecht (Het Utrechts Archief) – requires Playwright
-uv run python main.py limburg            # Limburg (RHCL, archieven.nl MAIS) – requires Playwright
-uv run python main.py noordholland       # Noord-Holland (Noord-Hollands Archief) – requires Playwright
-uv run python main.py zeeland            # Zeeland (Zeeuws Archief) – requires Playwright
-uv run python main.py gelderland         # Gelderland (Gelders Archief) – requires Playwright
-uv run python main.py all
+uv run memories-crawl friesland          # Friesland (Tresoar / AlleFriezen, Memorix API)
+uv run memories-crawl nationaalarchief   # Zuid-Holland (Nationaal Archief 3.06.05)
+uv run memories-crawl drentsarchief      # Drenthe (Memorix API)
+uv run memories-crawl bhic               # Noord-Brabant (BHIC Memorix API)
+uv run memories-crawl overijssel         # Overijssel (HCO) – requires Playwright
+uv run memories-crawl utrechtsarchief    # Utrecht (Het Utrechts Archief) – requires Playwright
+uv run memories-crawl limburg            # Limburg (RHCL, archieven.nl MAIS) – requires Playwright
+uv run memories-crawl noordholland       # Noord-Holland (Noord-Hollands Archief) – requires Playwright
+uv run memories-crawl zeeland            # Zeeland (Zeeuws Archief) – requires Playwright
+uv run memories-crawl gelderland         # Gelderland (Gelders Archief) – requires Playwright
+uv run memories-crawl all
 ```
 
 ## File map
 
 | File | Purpose |
 |---|---|
-| `main.py` | CLI dispatcher |
-| `python/nationaalarchief.py` | Zuid-Holland: scrape viewer pages, download via UUID |
-| `python/drentsarchief.py` | Drenthe: Memorix REST API, deed→asset chain |
-| `python/bhic.py` | Noord-Brabant (BHIC): Memorix REST API, register→asset chain |
-| `python/overijssel.py` | Overijssel: Playwright-based MAIS token extraction |
-| `python/utrechtsarchief.py` | Utrecht: Playwright-based MAIS stk3 inline strip extraction |
-| `python/limburg.py` | Limburg (RHCL): Playwright on archieven.nl, strip Volgende-step |
-| `python/noordholland.py` | Noord-Holland: Playwright-based MAIS stk3 inline strip extraction |
-| `python/zeeland.py` | Zeeland: Playwright-based MAIS hybrid (inv3 discovery + inv2 strip harvest) |
-| `python/friesland.py` | Friesland: Tresoar / AlleFriezen Memorix REST API, register→deed→person chain |
-| `python/gelderland.py` | Gelderland: Playwright-based MAIS, one micode per kantoor (21 codes), strip auto-loads on inv2 minr |
+| `src/memories_crawl/cli.py` | CLI dispatcher |
+| `src/memories_crawl/nationaalarchief.py` | Zuid-Holland: scrape viewer pages, download via UUID |
+| `src/memories_crawl/drentsarchief.py` | Drenthe: Memorix REST API, deed→asset chain |
+| `src/memories_crawl/bhic.py` | Noord-Brabant (BHIC): Memorix REST API, register→asset chain |
+| `src/memories_crawl/overijssel.py` | Overijssel: Playwright-based MAIS token extraction |
+| `src/memories_crawl/utrechtsarchief.py` | Utrecht: Playwright-based MAIS stk3 inline strip extraction |
+| `src/memories_crawl/limburg.py` | Limburg (RHCL): Playwright on archieven.nl, strip Volgende-step |
+| `src/memories_crawl/noordholland.py` | Noord-Holland: Playwright-based MAIS stk3 inline strip extraction |
+| `src/memories_crawl/zeeland.py` | Zeeland: Playwright-based MAIS hybrid (inv3 discovery + inv2 strip harvest) |
+| `src/memories_crawl/friesland.py` | Friesland: Tresoar / AlleFriezen Memorix REST API, register→deed→person chain |
+| `src/memories_crawl/gelderland.py` | Gelderland: Playwright-based MAIS, one micode per kantoor (21 codes), strip auto-loads on inv2 minr |
 
 ## Exclusion rule
 

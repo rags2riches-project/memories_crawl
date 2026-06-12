@@ -10,7 +10,7 @@ Images live at:
     https://preserve2.archieven.nl/mi-20/fonc-hco/0136.4/{invnr}/
         NL-ZlHCO_0136.4_{invnr}_{page:04d}.jpg
     Full-size: add query params  ?miadt=141&miahd={miahd}&mivast=20&rdt={rdt}&open={token}
-    Thumbnail: add              ?format=thumb&miadt=141&miahd={miahd}&mivast=20&rdt={rdt}&open={token}
+    Thumbnail: add  ?format=thumb&miadt=141&miahd={miahd}&mivast=20&rdt={rdt}&open={token}
     Without tokens → HTTP 202 + SVG placeholder.
 
 Tokens are per-page (miahd, open) and per-item (rdt). They are only visible in the
@@ -30,6 +30,7 @@ Strategy
 
 Dependency: ``playwright`` must be installed and ``playwright install chromium`` run.
 """
+
 from __future__ import annotations
 
 import csv
@@ -53,16 +54,16 @@ USER_AGENT = "memories-crawl/1.0"
 # miadt=141, mivast=20, micode=0136.4 (verified April 2026).
 # The "Alfabetische Tafel / Klapper" sub-items are NOT listed here.
 KANTOOR_MINR: dict[str, int] = {
-    "Almelo":     2227676,
-    "Deventer":   2227950,
-    "Enschede":   2228207,
-    "Goor":       2228335,
-    "Kampen":     2228502,
-    "Ommen":      2228649,
-    "Raalte":     2228752,
-    "Steenwijk":  2228889,
+    "Almelo": 2227676,
+    "Deventer": 2227950,
+    "Enschede": 2228207,
+    "Goor": 2228335,
+    "Kampen": 2228502,
+    "Ommen": 2228649,
+    "Raalte": 2228752,
+    "Steenwijk": 2228889,
     "Vollenhove": 2228980,
-    "Zwolle":     2229046,
+    "Zwolle": 2229046,
 }
 
 _INV3_URL = (
@@ -153,12 +154,12 @@ def _load_cached_tokens(minr: int) -> list[dict] | None:
     cache_path = _get_token_cache_path(minr)
     if cache_path.exists():
         try:
-            with open(cache_path, "r", encoding="utf-8") as f:
+            with open(cache_path, encoding="utf-8") as f:
                 tokens = json.load(f)
             if tokens:
                 print(f"    loaded {len(tokens)} cached tokens")
                 return tokens
-        except (json.JSONDecodeError, IOError):
+        except (OSError, json.JSONDecodeError):
             pass
     return None
 
@@ -240,8 +241,10 @@ def _fetch_page_tokens_via_playwright(minr: int) -> list[dict]:
                     pages_by_key[(rec["invnr"], rec["page"])] = rec
 
             if (idx + 1) % 25 == 0:
-                print(f"    processed {idx + 1}/{len(stk3_arg_list)} items, "
-                      f"{len(pages_by_key)} pages so far")
+                print(
+                    f"    processed {idx + 1}/{len(stk3_arg_list)} items, "
+                    f"{len(pages_by_key)} pages so far"
+                )
 
         browser.close()
 
@@ -293,8 +296,9 @@ def _write_metadata(dest_dir: Path, kantoor: str, invnr: int, n_scans: int) -> N
         json.dump(meta, f, ensure_ascii=False, indent=2)
 
 
-def main(invnrs: set[str] | None = None, list_invnrs: bool = False,
-         csv_out: str | None = None) -> None:
+def main(
+    invnrs: set[str] | None = None, list_invnrs: bool = False, csv_out: str | None = None
+) -> None:
     session = requests.Session()
     session.headers["User-Agent"] = USER_AGENT
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -316,10 +320,7 @@ def main(invnrs: set[str] | None = None, list_invnrs: bool = False,
 
         # --invnr filter before download
         if invnrs is not None:
-            invnr_pages = {
-                invnr: ips for invnr, ips in invnr_pages.items()
-                if str(invnr) in invnrs
-            }
+            invnr_pages = {invnr: ips for invnr, ips in invnr_pages.items() if str(invnr) in invnrs}
 
         # --list-invnrs: print and skip download for this kantoor
         if list_invnrs:
@@ -328,11 +329,19 @@ def main(invnrs: set[str] | None = None, list_invnrs: bool = False,
             print(f"  {'------':>6}  -----")
             for invnr in sorted(invnr_pages.keys()):
                 print(f"  {invnr:>6}  {len(invnr_pages[invnr]):>5}")
-                csv_rows.append({
-                    "kantoor": kantoor, "invnr": invnr,
-                    "pages": len(invnr_pages[invnr]),
-                })
+                csv_rows.append(
+                    {
+                        "kantoor": kantoor,
+                        "invnr": invnr,
+                        "pages": len(invnr_pages[invnr]),
+                    }
+                )
             continue
+
+        downloaded = 0
+        skipped = 0
+        missing = 0
+        for invnr, inv_pages in sorted(invnr_pages.items()):
             dest_dir = OUTPUT_DIR / kantoor / str(invnr)
             _write_metadata(dest_dir, kantoor, invnr, len(inv_pages))
             for p in inv_pages:

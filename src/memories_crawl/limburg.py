@@ -23,7 +23,7 @@ Scans are served from preserve3.archieven.nl behind per-page tokens:
     + ?format=thumb&miadt=38&miahd={miahd}&mivast=0&rdt={rdt}&open={token}  → 209×300 PNG
     + ?format=large&miadt=38&miahd={miahd}&mivast=0&rdt={rdt}&open={token}  → 714×1024 PNG
     + ?<tokens>                       (no format param)                     → 209×300 PNG
-    + no tokens                                                             → HTTP 202 SVG placeholder
+    + no tokens                                        → HTTP 202 SVG placeholder
 
 The "true" archival resolution (2090×3000 JPEG, ~540 KB) is only reachable
 through the IIPSrv tile pyramid (``iipsrv12.fcgi?FIF=cache/fonc-rhcl/<hash>.jp2&CVT=jpeg``),
@@ -49,6 +49,7 @@ Strategy
 
 Dependency: ``uv sync && uv run playwright install chromium``.
 """
+
 from __future__ import annotations
 
 import csv
@@ -67,7 +68,7 @@ ARCHIVE_NAME = "Regionaal Historisch Centrum Limburg"
 MAIS_ADT = "38"
 MAIS_VAST = "0"
 IMAGE_BASE = "https://preserve3.archieven.nl/mi-0/fonc-rhcl"
-IMAGE_FORMAT = "large"           # 714 × 1024 PNG; see module docstring
+IMAGE_FORMAT = "large"  # 714 × 1024 PNG; see module docstring
 USER_AGENT = "memories-crawl/1.0"
 
 OUTPUT_DIR = Path("scans/limburg")
@@ -79,16 +80,16 @@ OUTPUT_DIR = Path("scans/limburg")
 #   axis: human label for the per-item grouping in the title ("Plaats" or "Kantoor").
 ARCHIVE_CODES: dict[str, dict] = {
     "07.D03": {
-        "title":      "Memories van Successie, 1818-1900 (1905)",
-        "parent_minr": None,       # walk from the archive root
-        "axis":       "Plaats",
+        "title": "Memories van Successie, 1818-1900 (1905)",
+        "parent_minr": None,  # walk from the archive root
+        "axis": "Plaats",
     },
     "07.D08": {
-        "title":      "Memories van Successie, 1901-1927",
+        "title": "Memories van Successie, 1901-1927",
         # 07.D08 root has two children: the MvS section (1014062) and "Tafels 5bis"
         # (1014481). We start at the MvS minr so the tafel branch is never visited.
         "parent_minr": 1014062,
-        "axis":       "Kantoor",
+        "axis": "Kantoor",
     },
 }
 
@@ -193,10 +194,10 @@ def _parse_thumb_src(src: str) -> dict | None:
         return None
     return {
         "invnr": int(fn.group(1)),
-        "page":  int(fn.group(2)),
+        "page": int(fn.group(2)),
         "miahd": params["miahd"],
-        "rdt":   params.get("rdt", ""),
-        "open":  params["open"],
+        "rdt": params.get("rdt", ""),
+        "open": params["open"],
     }
 
 
@@ -227,6 +228,7 @@ def _split_title(raw_title: str, axis: str) -> tuple[str, str]:
 # Cache helpers
 # ---------------------------------------------------------------------------
 
+
 def _inventory_cache_path(code: str) -> Path:
     return OUTPUT_DIR / f"inventory_{code}.json"
 
@@ -254,6 +256,7 @@ def _save_json(path: Path, payload: object) -> None:
 # ---------------------------------------------------------------------------
 # Phase 1: enumerate the digitized inventory for one archive code
 # ---------------------------------------------------------------------------
+
 
 def _harvest_inventory(code: str) -> list[dict]:
     """Return every digitized inventarisnummer for ``code``.
@@ -309,14 +312,16 @@ def _harvest_inventory(code: str) -> list[dict]:
         if "tafel" in low or "v-bis" in low or "5bis" in low:
             continue
         name, datering = _split_title(title, axis)
-        out.append({
-            "invnr":    r["invnr"],
-            "minr":     r["minr"],
-            "title":    title,
-            "name":     name,        # Plaats or Kantoor
-            "datering": datering,
-            "axis":     axis,
-        })
+        out.append(
+            {
+                "invnr": r["invnr"],
+                "minr": r["minr"],
+                "title": title,
+                "name": name,  # Plaats or Kantoor
+                "datering": datering,
+                "axis": axis,
+            }
+        )
     out.sort(key=lambda r: r["invnr"])
 
     _save_json(_inventory_cache_path(code), out)
@@ -327,6 +332,7 @@ def _harvest_inventory(code: str) -> list[dict]:
 # ---------------------------------------------------------------------------
 # Phase 2: harvest per-page tokens for one inventarisnummer
 # ---------------------------------------------------------------------------
+
 
 def _harvest_tokens(page, code: str, invnr: int, minr: int) -> list[dict]:
     """Open the per-invnr page and step the strip's Volgende arrow to exhaustion."""
@@ -388,6 +394,7 @@ def _ensure_tokens(page, code: str, invnr: int, minr: int) -> list[dict]:
 # Phase 3: download
 # ---------------------------------------------------------------------------
 
+
 def _image_url(code: str, tok: dict) -> str:
     filename = f"NL-MtHCL_{code}_{tok['invnr']}_{tok['page']:04d}.jpg"
     return (
@@ -417,14 +424,14 @@ def _download_one(session: requests.Session, url: str, dest: Path) -> str:
 def _write_metadata(dest_dir: Path, code: str, item: dict, n_scans: int) -> None:
     naam = f"Memorie van Successie {item['name']} {code} {item['invnr']}".strip()
     meta = {
-        "archief_naam":    ARCHIVE_NAME,
-        "archief_nummer":  code,
-        "brontype":        "Memorie van Successie",
-        item["axis"].lower():  item["name"],   # "plaats" or "kantoor"
-        "datering":        item["datering"],
+        "archief_naam": ARCHIVE_NAME,
+        "archief_nummer": code,
+        "brontype": "Memorie van Successie",
+        item["axis"].lower(): item["name"],  # "plaats" or "kantoor"
+        "datering": item["datering"],
         "inventarisnummer": str(item["invnr"]),
-        "naam":            naam,
-        "n_scans":         n_scans,
+        "naam": naam,
+        "n_scans": n_scans,
     }
     dest_dir.mkdir(parents=True, exist_ok=True)
     with open(dest_dir / "metadata.json", "w", encoding="utf-8") as f:
@@ -435,8 +442,10 @@ def _write_metadata(dest_dir: Path, code: str, item: dict, n_scans: int) -> None
 # Entry point
 # ---------------------------------------------------------------------------
 
-def main(invnrs: set[str] | None = None, list_invnrs: bool = False,
-         csv_out: str | None = None) -> None:
+
+def main(
+    invnrs: set[str] | None = None, list_invnrs: bool = False, csv_out: str | None = None
+) -> None:
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     session = requests.Session()
     session.headers["User-Agent"] = USER_AGENT
@@ -451,10 +460,7 @@ def main(invnrs: set[str] | None = None, list_invnrs: bool = False,
     # --invnr filter (before expensive token harvest)
     if invnrs is not None:
         for code in inventories:
-            inventories[code] = [
-                it for it in inventories[code]
-                if str(it["invnr"]) in invnrs
-            ]
+            inventories[code] = [it for it in inventories[code] if str(it["invnr"]) in invnrs]
         total = sum(len(v) for v in inventories.values())
         print(f"\nFiltered to {total} items matching --invnr.")
 
@@ -467,14 +473,19 @@ def main(invnrs: set[str] | None = None, list_invnrs: bool = False,
             print(f"  {'invnr':>6}  {axis:<20}  {'datering':<12}  title")
             print(f"  {'------':>6}  {'-' * min(len(axis), 20):<20}  {'------------':<12}  -----")
             for it in items:
-                print(f"  {it['invnr']:>6}  {it['name']:<20}  {it['datering']:<12}  {it['title'][:60]}")
-                csv_rows.append({
-                    "code": code,
-                    "invnr": it["invnr"],
-                    "place_or_kantoor": it.get("name", ""),
-                    "datering": it.get("datering", ""),
-                    "title": it.get("title", ""),
-                })
+                print(
+                    f"  {it['invnr']:>6}  {it['name']:<20}"
+                    f"  {it['datering']:<12}  {it['title'][:60]}"
+                )
+                csv_rows.append(
+                    {
+                        "code": code,
+                        "invnr": it["invnr"],
+                        "place_or_kantoor": it.get("name", ""),
+                        "datering": it.get("datering", ""),
+                        "title": it.get("title", ""),
+                    }
+                )
         print()
         if csv_out and csv_rows:
             with open(csv_out, "w", newline="", encoding="utf-8") as f:
@@ -497,9 +508,7 @@ def main(invnrs: set[str] | None = None, list_invnrs: bool = False,
             continue
 
         # Skip Playwright entirely if every invnr already has cached tokens.
-        need_playwright = any(
-            not _tokens_cache_path(code, it["invnr"]).exists() for it in items
-        )
+        need_playwright = any(not _tokens_cache_path(code, it["invnr"]).exists() for it in items)
 
         if need_playwright:
             print(f"\n  {code}: harvesting tokens for {len(items)} registers …")
@@ -510,8 +519,11 @@ def main(invnrs: set[str] | None = None, list_invnrs: bool = False,
                     cache = _tokens_cache_path(code, it["invnr"])
                     if cache.exists():
                         continue
-                    print(f"    [{idx:>3}/{len(items)}] invnr {it['invnr']} "
-                          f"({it['name']}, {it['datering']}) …", flush=True)
+                    print(
+                        f"    [{idx:>3}/{len(items)}] invnr {it['invnr']} "
+                        f"({it['name']}, {it['datering']}) …",
+                        flush=True,
+                    )
                     toks = _ensure_tokens(page, code, it["invnr"], it["minr"])
                     print(f"        → {len(toks)} pages")
                 browser.close()
@@ -532,8 +544,10 @@ def main(invnrs: set[str] | None = None, list_invnrs: bool = False,
                 totals[status] += 1
                 if status == "downloaded":
                     time.sleep(0.10)
-        print(f"    {code}: {totals['downloaded']} new, "
-              f"{totals['exists']} existing, {totals['missing']} missing")
+        print(
+            f"    {code}: {totals['downloaded']} new, "
+            f"{totals['exists']} existing, {totals['missing']} missing"
+        )
 
     print("\nDone (Limburg).")
 

@@ -33,6 +33,7 @@ Strategy
 
 Dependency: ``uv sync && uv run playwright install chromium``.
 """
+
 from __future__ import annotations
 
 import csv
@@ -227,8 +228,8 @@ def _parse_thumb_url(url: str) -> dict | None:
     if not m:
         return None
     return {
-        "invnr": int(m.group(2)),   # group 2 = invnr (group 1 = archive code 178)
-        "page": int(m.group(3)),    # group 3 = page number
+        "invnr": int(m.group(2)),  # group 2 = invnr (group 1 = archive code 178)
+        "page": int(m.group(3)),  # group 3 = page number
         "miahd": int(m.group("miahd")),
         "rdt": m.group("rdt"),
         "open": m.group("open"),
@@ -247,6 +248,7 @@ def _fullsize_url(thumb_url: str) -> str:
 # Caching
 # ---------------------------------------------------------------------------
 
+
 def _token_cache_path(period_minr: int) -> Path:
     return OUTPUT_DIR / f"tokens_{period_minr}.json"
 
@@ -262,7 +264,11 @@ def _load_cached_tokens(period_minr: int) -> list[dict] | None:
                 with open(path, encoding="utf-8") as f:
                     tokens = json.load(f)
                 if tokens:
-                    label = "complete" if path.name.startswith("tokens_") and "partial" not in path.name else "partial"
+                    label = (
+                        "complete"
+                        if path.name.startswith("tokens_") and "partial" not in path.name
+                        else "partial"
+                    )
                     print(f"    loaded {len(tokens)} cached tokens ({label})")
                     return tokens
             except (json.JSONDecodeError, OSError):
@@ -356,11 +362,13 @@ def _discover_sections() -> list[dict]:
             print(f"    {len(periods)} MvS periods found")
 
             for p in periods:
-                sections.append({
-                    "kantoor": kantoor_name,
-                    "period_text": p["text"],
-                    "period_minr": p["minr"],
-                })
+                sections.append(
+                    {
+                        "kantoor": kantoor_name,
+                        "period_text": p["text"],
+                        "period_minr": p["minr"],
+                    }
+                )
 
         browser.close()
 
@@ -372,6 +380,7 @@ def _discover_sections() -> list[dict]:
 # ---------------------------------------------------------------------------
 # Phase 2: Harvest page tokens via Playwright (stk3 approach)
 # ---------------------------------------------------------------------------
+
 
 def _harvest_page_tokens(period_minr: int) -> list[dict]:
     """Return [{invnr, page, miahd, rdt, open, thumb_url, inv_text}, ...]."""
@@ -391,8 +400,10 @@ def _harvest_page_tokens(period_minr: int) -> list[dict]:
         for p in pages:
             seen_keys.add((p["invnr"], p["page"]))
         completed_invnrs = {p["invnr"] for p in pages}
-        print(f"    resuming from {len(pages)} already-collected pages "
-              f"({len(completed_invnrs)} invnrs)")
+        print(
+            f"    resuming from {len(pages)} already-collected pages "
+            f"({len(completed_invnrs)} invnrs)"
+        )
 
     from playwright.sync_api import sync_playwright  # noqa: PLC0415
 
@@ -408,16 +419,12 @@ def _harvest_page_tokens(period_minr: int) -> list[dict]:
         stk3_items: list[dict] = page.evaluate(_JS_COLLECT_STK3_ITEMS)
         print(f"    {len(stk3_items)} stk3 child items")
 
-        items_to_process = [
-            item for item in stk3_items
-            if item["invnr"] not in completed_invnrs
-        ]
+        items_to_process = [item for item in stk3_items if item["invnr"] not in completed_invnrs]
         skipped = len(stk3_items) - len(items_to_process)
         if skipped > 0:
             print(f"    skipping {skipped} already-collected items")
 
         for idx, item in enumerate(items_to_process):
-            invnr = item["invnr"]
             inv_text = item["text"]
             args_str = item["args"]
 
@@ -468,6 +475,7 @@ def _harvest_page_tokens(period_minr: int) -> list[dict]:
 # Phase 3: Download scans
 # ---------------------------------------------------------------------------
 
+
 def _download_file(session: requests.Session, url: str, dest: Path) -> str:
     if dest.exists() and dest.stat().st_size > 0:
         return "exists"
@@ -506,8 +514,10 @@ def _write_metadata(
 # Main
 # ---------------------------------------------------------------------------
 
-def main(invnrs: set[str] | None = None, list_invnrs: bool = False,
-         csv_out: str | None = None) -> None:
+
+def main(
+    invnrs: set[str] | None = None, list_invnrs: bool = False, csv_out: str | None = None
+) -> None:
     session = requests.Session()
     session.headers["User-Agent"] = USER_AGENT
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -521,9 +531,9 @@ def main(invnrs: set[str] | None = None, list_invnrs: bool = False,
         print("ERROR: no sections found. The tree structure may have changed.")
         return
 
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print(f"Harvesting page tokens for {len(sections)} period sections")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
 
     done_file = OUTPUT_DIR / "done.txt"
     done: set[str] = set()
@@ -537,10 +547,10 @@ def main(invnrs: set[str] | None = None, list_invnrs: bool = False,
         kantoor = section["kantoor"]
         period_text = section["period_text"]
 
-        print(f"\n{'='*60}")
+        print(f"\n{'=' * 60}")
         print(f"  [{section_idx + 1}/{len(sections)}] {kantoor}: {period_text[:80]}")
         print(f"  period_minr={period_minr}")
-        print(f"{'='*60}")
+        print(f"{'=' * 60}")
 
         if str(period_minr) in done:
             print("  Already fully downloaded, skipping.")
@@ -567,10 +577,7 @@ def main(invnrs: set[str] | None = None, list_invnrs: bool = False,
 
         # --invnr filter before download
         if invnrs is not None:
-            invnr_pages = {
-                invnr: ips for invnr, ips in invnr_pages.items()
-                if str(invnr) in invnrs
-            }
+            invnr_pages = {invnr: ips for invnr, ips in invnr_pages.items() if str(invnr) in invnrs}
             invnr_texts = {invnr: invnr_texts[invnr] for invnr in invnr_pages}
 
         # --list-invnrs: print and skip download for this section
@@ -581,13 +588,15 @@ def main(invnrs: set[str] | None = None, list_invnrs: bool = False,
             for invnr in sorted(invnr_pages.keys()):
                 desc = invnr_texts.get(invnr, "")[:30]
                 print(f"    {invnr:>6}  {desc:<30}  {len(invnr_pages[invnr]):>5}")
-                csv_rows.append({
-                    "kantoor": kantoor,
-                    "period": period_text[:60],
-                    "invnr": invnr,
-                    "description": invnr_texts.get(invnr, ""),
-                    "pages": len(invnr_pages[invnr]),
-                })
+                csv_rows.append(
+                    {
+                        "kantoor": kantoor,
+                        "period": period_text[:60],
+                        "invnr": invnr,
+                        "description": invnr_texts.get(invnr, ""),
+                        "pages": len(invnr_pages[invnr]),
+                    }
+                )
             continue
 
         downloaded = skipped = missing = 0
@@ -613,8 +622,10 @@ def main(invnrs: set[str] | None = None, list_invnrs: bool = False,
                     inv_missing += 1
                 time.sleep(0.15)
 
-            print(f"{len(inv_pages)} pages "
-                  f"({inv_downloaded} new, {inv_skipped} existing, {inv_missing} missing)")
+            print(
+                f"{len(inv_pages)} pages "
+                f"({inv_downloaded} new, {inv_skipped} existing, {inv_missing} missing)"
+            )
 
             downloaded += inv_downloaded
             skipped += inv_skipped
@@ -641,8 +652,10 @@ def main(invnrs: set[str] | None = None, list_invnrs: bool = False,
             print(f"Wrote {len(csv_rows)} rows to {csv_out}\n")
         return
 
-    print(f"\n===== COMPLETE =====")
-    print(f"Total: {grand_downloaded} downloaded, {grand_skipped} existing, {grand_missing} missing")
+    print("\n===== COMPLETE =====")
+    print(
+        f"Total: {grand_downloaded} downloaded, {grand_skipped} existing, {grand_missing} missing"
+    )
     print("Done (Noord-Holland).")
 
 

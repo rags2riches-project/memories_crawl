@@ -1,16 +1,57 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
 [project]
 name = "memories-crawl"
-version = "0.1.0"
-description = "Add your description here"
+version = "0.2.0"
+description = "Download all surviving Memories van Successie (Dutch succession registers, 1806–1927) from ten regional Dutch archives"
 readme = "README.md"
-requires-python = ">=3.14"
+requires-python = ">=3.12"
+license = { text = "MIT" }
+authors = [
+    { name = "Bas Machielsen", email = "basmachielsen@live.nl" },
+]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Topic :: Sociology :: History",
+]
+keywords = ["dutch-archives", "memories-van-successie", "genealogy", "web-scraping"]
 dependencies = [
     "requests>=2.33.1",
     "playwright>=1.40",
 ]
 
+[project.urls]
+Homepage = "https://github.com/bas/memories_crawl"
+Repository = "https://github.com/bas/memories_crawl"
+Documentation = "https://github.com/bas/memories_crawl#readme"
+
+[project.scripts]
+memories-crawl = "memories_crawl.cli:main"
+
 [dependency-groups]
 dev = [
     "pytest>=9.0.3",
+    "ruff>=0.11.0",
 ]
 
+[tool.hatch.build.targets.wheel]
+packages = ["src/memories_crawl"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W", "UP"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

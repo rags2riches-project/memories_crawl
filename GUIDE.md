@@ -61,4 +61,4 @@ It does not transcribe handwriting, index names, or turn the scans into searchab
 
 ---
 
-The scripts live in `python/`. Each file covers one archive. Run `uv run python main.py all` to download everything, or pick individual archives with e.g. `uv run python main.py bhic`. See `README.md` for the full command list and setup instructions.
+The scripts live in `src/memories_crawl/`. Each file covers one archive. Run `memories-crawl all` to download everything, or pick individual archives with e.g. `memories-crawl bhic`. See `README.md` for the full command list and setup instructions.

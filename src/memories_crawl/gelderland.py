@@ -64,6 +64,7 @@ Strategy
 
 Dependency: ``uv sync && uv run playwright install chromium``.
 """
+
 from __future__ import annotations
 
 import csv
@@ -88,27 +89,27 @@ USER_AGENT = "memories-crawl/1.0"
 #: permalinks listed on https://www.geldersarchief.nl/informatie/zoekhulp/
 #: 997-memories-van-successie.  Each kantoor is its own access.
 KANTOREN: dict[str, str] = {
-    "Arnhem":      "0021",
-    "Apeldoorn":   "0092",
-    "Borculo":     "0022",
-    "Culemborg":   "0023",
-    "Doesburg":    "0024",
-    "Druten":      "0025",
-    "Elburg":      "0027",
-    "Elst":        "0028",
-    "Groenlo":     "0029",
-    "Harderwijk":  "0030",
-    "Hattem":      "0031",
-    "Lochem":      "0032",
-    "Nijkerk":     "0033",
-    "Nijmegen":    "0034",
-    "Terborg":     "0035",
-    "Tiel":        "0026",
-    "Wageningen":  "0036",
+    "Arnhem": "0021",
+    "Apeldoorn": "0092",
+    "Borculo": "0022",
+    "Culemborg": "0023",
+    "Doesburg": "0024",
+    "Druten": "0025",
+    "Elburg": "0027",
+    "Elst": "0028",
+    "Groenlo": "0029",
+    "Harderwijk": "0030",
+    "Hattem": "0031",
+    "Lochem": "0032",
+    "Nijkerk": "0033",
+    "Nijmegen": "0034",
+    "Terborg": "0035",
+    "Tiel": "0026",
+    "Wageningen": "0036",
     "Winterswijk": "0223",
-    "Zaltbommel":  "0037",
-    "Zevenaar":    "0221",
-    "Zutphen":     "0222",
+    "Zaltbommel": "0037",
+    "Zevenaar": "0221",
+    "Zutphen": "0222",
 }
 
 _BROWSER_UA = (
@@ -120,6 +121,7 @@ _BROWSER_UA = (
 # ---------------------------------------------------------------------------
 # URL builders
 # ---------------------------------------------------------------------------
+
 
 def _inv2_url(code: str) -> str:
     """inv2 root page for one kantoor (micode); lists Register IV + Tafel."""
@@ -288,6 +290,7 @@ def _fullsize_url(thumb_url: str) -> str:
 # Cache helpers
 # ---------------------------------------------------------------------------
 
+
 def _inventory_path(code: str) -> Path:
     return OUTPUT_DIR / f"inventory_{code}.json"
 
@@ -320,6 +323,7 @@ def _load_json(path: Path) -> object | None:
 # Phase 1: Discover digitized invnrs for one kantoor
 # ---------------------------------------------------------------------------
 
+
 def _discover_invnrs(kantoor: str, code: str) -> list[dict]:
     """Return [{invnr, text, minr, hasScan}, ...] for one kantoor, cached."""
     cached = _load_json(_inventory_path(code))
@@ -351,9 +355,8 @@ def _discover_invnrs(kantoor: str, code: str) -> list[dict]:
         # iteratively until no new swapinv links appear.  Each pass clicks the
         # links that were not yet expanded; new periods may surface as deeper
         # children load their own swapinvs.
-        page.goto(_inv3_url(code, register_minr),
-                  wait_until="networkidle", timeout=60_000)
-        page.wait_for_selector('a[onclick]', state="attached", timeout=30_000)
+        page.goto(_inv3_url(code, register_minr), wait_until="networkidle", timeout=60_000)
+        page.wait_for_selector("a[onclick]", state="attached", timeout=30_000)
 
         total_expanded = 0
         for _ in range(40):
@@ -377,6 +380,7 @@ def _discover_invnrs(kantoor: str, code: str) -> list[dict]:
 # Phase 2: Harvest tokens for every digitized invnr
 # ---------------------------------------------------------------------------
 
+
 def _harvest_page_tokens(kantoor: str, code: str, invnrs: list[dict]) -> list[dict]:
     """Navigate to each digitized invnr's inv2 page and harvest its thumbnails.
 
@@ -399,13 +403,12 @@ def _harvest_page_tokens(kantoor: str, code: str, invnrs: list[dict]) -> list[di
         for p in pages:
             seen_keys.add((p["invnr"], p["page"]))
         completed_invnrs = {p["invnr"] for p in pages}
-        print(f"    resuming from {len(pages)} already-collected pages "
-              f"({len(completed_invnrs)} invnrs)")
+        print(
+            f"    resuming from {len(pages)} already-collected pages "
+            f"({len(completed_invnrs)} invnrs)"
+        )
 
-    digitized = [
-        it for it in invnrs
-        if it.get("hasScan") and it["invnr"] not in completed_invnrs
-    ]
+    digitized = [it for it in invnrs if it.get("hasScan") and it["invnr"] not in completed_invnrs]
     if not digitized:
         if pages:
             _save_json(complete_path, pages)
@@ -423,11 +426,13 @@ def _harvest_page_tokens(kantoor: str, code: str, invnrs: list[dict]) -> list[di
             invnr = it["invnr"]
             invnr_minr = it["minr"]
             inv_text = it["text"]
-            print(f"    [{idx + 1}/{len(digitized)}] invnr {invnr} "
-                  f"({inv_text[:60].strip()} …)", end=" ", flush=True)
+            print(
+                f"    [{idx + 1}/{len(digitized)}] invnr {invnr} ({inv_text[:60].strip()} …)",
+                end=" ",
+                flush=True,
+            )
 
-            p.goto(_inv2_minr_url(code, invnr_minr),
-                   wait_until="networkidle", timeout=60_000)
+            p.goto(_inv2_minr_url(code, invnr_minr), wait_until="networkidle", timeout=60_000)
             p.wait_for_timeout(1_500)
 
             fl = p.evaluate(_JS_STRIP_FORCE_LOAD)
@@ -468,6 +473,7 @@ def _harvest_page_tokens(kantoor: str, code: str, invnrs: list[dict]) -> list[di
 # ---------------------------------------------------------------------------
 # Phase 3: Download scans
 # ---------------------------------------------------------------------------
+
 
 def _download_file(session: requests.Session, url: str, dest: Path) -> str:
     if dest.exists() and dest.stat().st_size > 0:
@@ -519,8 +525,10 @@ def _write_metadata(
 # Main
 # ---------------------------------------------------------------------------
 
-def main(invnrs: set[str] | None = None, list_invnrs: bool = False,
-         csv_out: str | None = None) -> None:
+
+def main(
+    invnrs: set[str] | None = None, list_invnrs: bool = False, csv_out: str | None = None
+) -> None:
     session = requests.Session()
     session.headers["User-Agent"] = USER_AGENT
     session.headers["Referer"] = "https://www.geldersarchief.nl/"
@@ -540,18 +548,18 @@ def main(invnrs: set[str] | None = None, list_invnrs: bool = False,
                 print(f"  {'------':>6}  -----------")
                 for it in digitized:
                     print(f"  {it['invnr']:>6}  {it['text'][:60]}")
-                    csv_rows.append({
-                        "kantoor": kantoor,
-                        "code": code,
-                        "invnr": it["invnr"],
-                        "description": it["text"],
-                    })
+                    csv_rows.append(
+                        {
+                            "kantoor": kantoor,
+                            "code": code,
+                            "invnr": it["invnr"],
+                            "description": it["text"],
+                        }
+                    )
         print()
         if csv_out and csv_rows:
             with open(csv_out, "w", newline="", encoding="utf-8") as f:
-                writer = csv.DictWriter(
-                    f, fieldnames=["kantoor", "code", "invnr", "description"]
-                )
+                writer = csv.DictWriter(f, fieldnames=["kantoor", "code", "invnr", "description"])
                 writer.writeheader()
                 writer.writerows(csv_rows)
             print(f"Wrote {len(csv_rows)} rows to {csv_out}\n")
@@ -565,9 +573,9 @@ def main(invnrs: set[str] | None = None, list_invnrs: bool = False,
     grand_downloaded = grand_skipped = grand_missing = 0
 
     for k_idx, (kantoor, code) in enumerate(KANTOREN.items()):
-        print(f"\n{'='*60}")
+        print(f"\n{'=' * 60}")
         print(f"  [{k_idx + 1}/{len(KANTOREN)}] Kantoor {kantoor}  (code {code})")
-        print(f"{'='*60}")
+        print(f"{'=' * 60}")
 
         if code in done:
             print("  Already fully downloaded, skipping.")
@@ -626,16 +634,17 @@ def main(invnrs: set[str] | None = None, list_invnrs: bool = False,
                     inv_missing += 1
                 time.sleep(0.15)
 
-            print(f"  invnr {invnr} ({inv_text[:40].strip()}) "
-                  f"{len(inv_pages)} pages "
-                  f"({inv_downloaded} new, {inv_skipped} existing, "
-                  f"{inv_missing} missing)")
+            print(
+                f"  invnr {invnr} ({inv_text[:40].strip()}) "
+                f"{len(inv_pages)} pages "
+                f"({inv_downloaded} new, {inv_skipped} existing, "
+                f"{inv_missing} missing)"
+            )
             downloaded += inv_downloaded
             skipped += inv_skipped
             missing += inv_missing
 
-        print(f"  Kantoor totals: {downloaded} new, {skipped} existing, "
-              f"{missing} missing")
+        print(f"  Kantoor totals: {downloaded} new, {skipped} existing, {missing} missing")
 
         grand_downloaded += downloaded
         grand_skipped += skipped
@@ -644,9 +653,10 @@ def main(invnrs: set[str] | None = None, list_invnrs: bool = False,
         with open(done_file, "a") as f:
             f.write(f"{code}\n")
 
-    print(f"\n===== COMPLETE =====")
-    print(f"Total: {grand_downloaded} downloaded, {grand_skipped} existing, "
-          f"{grand_missing} missing")
+    print("\n===== COMPLETE =====")
+    print(
+        f"Total: {grand_downloaded} downloaded, {grand_skipped} existing, {grand_missing} missing"
+    )
     print("Done (Gelderland).")
 
 

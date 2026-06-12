@@ -7,6 +7,7 @@ Uses the Memorix genealogy REST API:
 One deed corresponds to one succession register entry; multiple persons can share a deed.
 We collect unique deed_ids from the person search, then download per deed.
 """
+
 from __future__ import annotations
 
 import csv
@@ -146,8 +147,9 @@ def _get_deed_invnr(deed_data: dict) -> str:
     )
 
 
-def main(invnrs: set[str] | None = None, list_invnrs: bool = False,
-         csv_out: str | None = None) -> None:
+def main(
+    invnrs: set[str] | None = None, list_invnrs: bool = False, csv_out: str | None = None
+) -> None:
     session = _session()
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -165,12 +167,9 @@ def main(invnrs: set[str] | None = None, list_invnrs: bool = False,
             if invnr:
                 invnr_set.add(invnr)
             if (i + 1) % 100 == 0:
-                print(f"  {i + 1}/{len(deeds)} deeds checked, "
-                      f"{len(invnr_set)} unique invnrs …")
+                print(f"  {i + 1}/{len(deeds)} deeds checked, {len(invnr_set)} unique invnrs …")
             time.sleep(0.2)
-        sorted_invnrs = sorted(
-            invnr_set, key=lambda x: (int(x) if x.isdigit() else 999999, x)
-        )
+        sorted_invnrs = sorted(invnr_set, key=lambda x: (int(x) if x.isdigit() else 999999, x))
         print(f"\n{len(sorted_invnrs)} unique inventory numbers:\n")
         for invnr in sorted_invnrs:
             print(f"  {invnr}")
@@ -207,15 +206,22 @@ def main(invnrs: set[str] | None = None, list_invnrs: bool = False,
 
             # --invnr filter: skip deeds whose invnr doesn't match
             if invnrs is not None and deed_invnr not in invnrs:
-                writer.writerow({"deed_id": deed_id, "invnr": deed_invnr,
-                                 "status": "skipped_invnr", "n_scans": 0})
+                writer.writerow(
+                    {
+                        "deed_id": deed_id,
+                        "invnr": deed_invnr,
+                        "status": "skipped_invnr",
+                        "n_scans": 0,
+                    }
+                )
                 time.sleep(0.2)
                 continue
 
             assets = deed_data.get("asset") or []
             if not assets:
-                writer.writerow({"deed_id": deed_id, "invnr": deed_invnr,
-                                 "status": "no_assets", "n_scans": 0})
+                writer.writerow(
+                    {"deed_id": deed_id, "invnr": deed_invnr, "status": "no_assets", "n_scans": 0}
+                )
                 time.sleep(0.2)
                 continue
 
@@ -230,8 +236,9 @@ def main(invnrs: set[str] | None = None, list_invnrs: bool = False,
                 dest = dest_dir / f"{idx:04d}{ext}"
                 _download_file(session, download_url, dest)
 
-            writer.writerow({"deed_id": deed_id, "invnr": deed_invnr,
-                             "status": "done", "n_scans": len(assets)})
+            writer.writerow(
+                {"deed_id": deed_id, "invnr": deed_invnr, "status": "done", "n_scans": len(assets)}
+            )
             time.sleep(0.3)
 
     print("Done.")
