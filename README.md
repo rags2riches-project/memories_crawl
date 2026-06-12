@@ -62,7 +62,7 @@ uv run python main.py gelderland
 
 ## Filtering and listing inventory numbers
 
-Two flags let you scope downloads instead of pulling the entire archive:
+Three flags let you scope downloads instead of pulling the entire archive:
 
 ### `--list-invnrs` — see what's available
 
@@ -78,6 +78,33 @@ uv run python main.py drentsarchief --list-invnrs   # slow — fetches all deeds
 For archives with cached inventory (Limburg, Gelderland, Zeeland), this runs instantly
 without launching a browser. For others (Overijssel, Utrecht, Noord-Holland), it needs
 the Playwright token-harvest pass first — but cached tokens are reused on reruns.
+
+### `--csv` — export listing to a spreadsheet
+
+When combined with `--list-invnrs`, writes the inventory listing to a CSV file
+instead of (or in addition to) printing it to the terminal. The terminal output
+is still shown.
+
+```bash
+# Default filename: {pipeline}_invnrs.csv
+uv run python main.py zeeland --list-invnrs --csv
+
+# Custom filename
+uv run python main.py gelderland --list-invnrs --csv my-output.csv
+```
+
+| Archive | CSV columns |
+|---|---|
+| friesland | `invnr, kantoor, register_name` |
+| nationaalarchief | `invnr` |
+| drentsarchief | `invnr` |
+| bhic | `invnr, gemeente, register_name` |
+| overijssel | `kantoor, invnr, pages` |
+| utrechtsarchief | `kantoor, section, invnr, description, pages` |
+| limburg | `code, invnr, place_or_kantoor, datering, title` |
+| noordholland | `kantoor, period, invnr, description, pages` |
+| zeeland | `kantoor, invnr, description` |
+| gelderland | `kantoor, code, invnr, description` |
 
 ### `--invnr` — download a specific volume
 
