@@ -252,13 +252,17 @@ def _write_metadata(dest_dir: Path, invnr: int, html: str, scans: list[dict]) ->
         json.dump(meta, f, ensure_ascii=False, indent=2)
 
 
-def main() -> None:
+def main(invnrs: set[str] | None = None) -> None:
     session = _session()
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
     print("Fetching inventory numbers from EAD XML …")
     inv_numbers = _fetch_inventory_numbers(session)
     print(f"Found {len(inv_numbers)} inventory items: {inv_numbers[0]}–{inv_numbers[-1]}")
+
+    if invnrs is not None:
+        inv_numbers = [n for n in inv_numbers if str(n) in invnrs]
+        print(f"Filtered to {len(inv_numbers)} inventory numbers matching --invnr.")
 
     done_file = Path("nationaalarchief_done.txt")
     done: set[str] = set()

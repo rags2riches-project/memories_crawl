@@ -292,7 +292,7 @@ def _write_metadata(dest_dir: Path, kantoor: str, invnr: int, n_scans: int) -> N
         json.dump(meta, f, ensure_ascii=False, indent=2)
 
 
-def main() -> None:
+def main(invnrs: set[str] | None = None) -> None:
     session = requests.Session()
     session.headers["User-Agent"] = USER_AGENT
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)

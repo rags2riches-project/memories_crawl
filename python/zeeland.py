@@ -494,7 +494,7 @@ def _write_metadata(
 # Main
 # ---------------------------------------------------------------------------
 
-def main() -> None:
+def main(invnrs: set[str] | None = None) -> None:
     session = requests.Session()
     session.headers["User-Agent"] = USER_AGENT
     session.headers["Referer"] = "https://www.zeeuwsarchief.nl/"

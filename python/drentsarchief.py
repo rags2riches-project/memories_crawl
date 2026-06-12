@@ -137,7 +137,7 @@ def _write_metadata(dest_dir: Path, deed_data: dict, person_data: dict) -> None:
         json.dump(meta, f, ensure_ascii=False, indent=2)
 
 
-def main() -> None:
+def main(invnrs: set[str] | None = None) -> None:
     session = _session()
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 

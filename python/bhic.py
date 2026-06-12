@@ -238,13 +238,20 @@ def _load_done() -> set[str]:
     return done
 
 
-def main() -> None:
+def main(invnrs: set[str] | None = None) -> None:
     session = _session()
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
     print("Collecting BHIC Memorie van Successie registers …")
     registers = _paginate(session, "/register", REGISTER_FILTER, "register")
     print(f"Found {len(registers)} registers.")
+
+    if invnrs is not None:
+        registers = [
+            r for r in registers
+            if (r.get("metadata") or {}).get("inventarisnummer", "") in invnrs
+        ]
+        print(f"Filtered to {len(registers)} registers matching --invnr.")
 
     done = _load_done()
     write_header = not PROGRESS_CSV.exists() or PROGRESS_CSV.stat().st_size == 0
