@@ -1,0 +1,17 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it using the metadata below."
+title: "memories_crawl: software for retrieving and structuring the Memories van Successie"
+version: "0.2.1"
+license: MIT
+type: software
+abstract: "Python software for retrieving Memories van Successie scans and structured metadata from ten Dutch archives."
+authors:
+  - given-names: Bas
+    family-names: Machielsen
+    affiliation: Utrecht University
+keywords:
+  - Memories van Successie
+  - Dutch archives
+  - genealogy
+  - record linkage
+  - web scraping
