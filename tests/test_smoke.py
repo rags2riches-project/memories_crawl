@@ -93,3 +93,36 @@ def test_cli_exposes_out_dir() -> None:
         text=True,
     )
     assert "--out-dir" in result.stdout
+
+
+def test_every_kantoor_archive_main_accepts_kantoren() -> None:
+    """--kantoor can be threaded into every pipeline that has kantoren.
+
+    nationaalarchief is the exception: access 3.06.05 is one flat inventory
+    range, so the CLI reports the flag as ignored instead of passing it down.
+    """
+    import importlib
+    import inspect
+
+    for archive in [
+        "friesland",
+        "drentsarchief",
+        "bhic",
+        "overijssel",
+        "utrechtsarchief",
+        "limburg",
+        "noordholland",
+        "zeeland",
+        "gelderland",
+    ]:
+        mod = importlib.import_module(f"memories_crawl.{archive}")
+        assert "kantoren" in inspect.signature(mod.main).parameters, archive
+
+
+def test_cli_exposes_kantoor() -> None:
+    result = subprocess.run(
+        [sys.executable, "-m", "memories_crawl", "--help"],
+        capture_output=True,
+        text=True,
+    )
+    assert "--kantoor" in result.stdout

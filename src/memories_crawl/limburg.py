@@ -60,7 +60,7 @@ from pathlib import Path
 
 import requests
 
-from memories_crawl import paths
+from memories_crawl import filters, paths
 from memories_crawl.summary import PageTally, RunSummary, announce
 
 # ---------------------------------------------------------------------------
@@ -261,6 +261,32 @@ def _save_json(path: Path, payload: object) -> None:
 # ---------------------------------------------------------------------------
 
 
+def _keep_item(
+    item: dict, code: str, invnrs: set[str] | None, kantoor_filter: set[str] | None
+) -> bool:
+    """Whether one inventory item survives the --invnr / --kantoor filters.
+
+    ``name`` is the place of death for 07.D03 and the kantoor for 07.D08 --
+    the ``place_or_kantoor`` column of ``--list-invnrs`` -- and the archive
+    code itself is accepted as a kantoor name too.
+    """
+    if invnrs is not None and str(item.get("invnr")) not in invnrs:
+        return False
+    return filters.matches(kantoor_filter, code, item.get("name") or "")
+
+
+def _cached_inventory(code: str) -> list[dict] | None:
+    """The cached inventory for ``code``, or ``None`` when there is none.
+
+    A missing cache is not evidence that the code holds nothing, so callers
+    must fall through to a full :func:`_harvest_inventory` pass.
+    """
+    cached = _load_json(_inventory_cache_path(code))
+    if not isinstance(cached, list) or not cached:
+        return None
+    return cached
+
+
 def _harvest_inventory(code: str) -> list[dict]:
     """Return every digitized inventarisnummer for ``code``.
 
@@ -451,7 +477,10 @@ def main(
     list_invnrs: bool = False,
     csv_out: str | None = None,
     out_dir: Path | None = None,
+    kantoren: set[str] | None = None,
 ) -> RunSummary | None:
+    kantoor_filter = filters.normalize(kantoren)
+
     if out_dir is not None:
         paths.set_out_dir(out_dir)
     output_dir = paths.archive_dir(ARCHIVE)
@@ -462,17 +491,25 @@ def main(
     session.headers["Referer"] = "https://www.archieven.nl/"
 
     # Phase 1: inventory per archive code (one Playwright session per code).
+    # Where the inventory is already cached the filters are resolved against it
+    # first, so a code that provably holds nothing we want is never discovered.
+    filtering = invnrs is not None or kantoor_filter is not None
     inventories: dict[str, list[dict]] = {}
     for code in ARCHIVE_CODES:
-        print(f"\n  {code}: discovering digitized inventarisnummers …")
-        inventories[code] = _harvest_inventory(code)
+        items = _cached_inventory(code) if filtering else None
+        if items is None:
+            print(f"\n  {code}: discovering digitized inventarisnummers …")
+            items = _harvest_inventory(code)
+        inventories[code] = [it for it in items if _keep_item(it, code, invnrs, kantoor_filter)]
 
-    # --invnr filter (before expensive token harvest)
-    if invnrs is not None:
-        for code in inventories:
-            inventories[code] = [it for it in inventories[code] if str(it["invnr"]) in invnrs]
+    if filtering:
         total = sum(len(v) for v in inventories.values())
-        print(f"\nFiltered to {total} items matching --invnr.")
+        print(f"\nFiltered to {total} items matching {filters.describe(invnrs, kantoren)}.")
+        if not total:
+            print(
+                f"\nWARNING: {filters.describe(invnrs, kantoren)} matched no "
+                f"inventarisnummer in either of the {len(ARCHIVE_CODES)} archive codes."
+            )
 
     # --list-invnrs (print table and exit, no Playwright or downloads)
     if list_invnrs:

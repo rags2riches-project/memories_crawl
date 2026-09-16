@@ -72,6 +72,48 @@ downloads nothing).
   the pipeline did not already report it, and prints none at all for
   `--list-invnrs`.
 
+## Archive-level inventory listing (issue #25)
+
+The four API-backed pipelines have to know which registers exist before they
+can do anything else, and that enumeration used to be re-paid on every
+invocation, including runs that download nothing. `src/memories_crawl/regcache.py`
+now stores the listing under `<out-dir>/.cache/{archive}/` for **30 days**:
+
+| Archive | Cache file | What it holds |
+|---|---|---|
+| `bhic` | `registers.json` | the raw `/register` documents (1,896) |
+| `friesland` | `registers.json` | the raw `/register` documents (1,107) |
+| `drentsarchief` | `registers.json` | the raw `/register` documents (557) |
+| `nationaalarchief` | `inventory.json` | the invnrs parsed out of the EAD XML |
+
+Rules the cache follows, because a listing that silently loses registers is
+much worse than a slow one:
+
+* keyed by the query that produced it (`REGISTER_FILTER` / `EAD_XML_URL`), so a
+  changed filter re-collects instead of serving the old answer;
+* anything unreadable, unrecognised, expired, future-dated or **empty** counts
+  as a miss and is re-collected — never read as "this archive is empty";
+* an empty result is never written, so a transient API hiccup cannot pin an
+  empty inventory in place for a month;
+* the Nationaal Archief fallback invnr list is never cached, for the same
+  reason;
+* Drenthe stores the *raw* register documents and applies `_is_tafel()` after
+  loading, so the Tafel V-bis rule is never baked into a cache file.
+
+`--refresh-cache` forces re-collection for these four pipelines. It is not
+passed to the Playwright ones, which have their own inventory/token caches.
+
+**Server-side `--invnr` is preferred over the cache.** Memorix indexes the
+inventarisnummer as the exact-match field `search_s_inventarisnummer`, so a
+`--invnr` run on `bhic`, `friesland` or `drentsarchief` issues one targeted
+request (`… AND search_s_inventarisnummer:("84" OR "1903-1906")`) instead of
+walking the listing, and neither reads nor writes the cache. Verified against
+all three tenants to return exactly what the old client-side filter kept,
+including non-numeric numbers (`1903-1906`, `15.2`, `6004a`) and with no
+prefix bleed (`1` does not match `12`). The Nationaal Archief has no such
+query — its inventory is one EAD XML download — so it keeps filtering client
+side over the cached list.
+
 ## File map
 
 | File | Purpose |
@@ -79,6 +121,9 @@ downloads nothing).
 | `src/memories_crawl/cli.py` | CLI dispatcher |
 | `src/memories_crawl/paths.py` | Output root, per-archive scan dirs and cache paths |
 | `src/memories_crawl/summary.py` | Download counters, per-archive summary, cross-archive total |
+
+| `src/memories_crawl/regcache.py` | TTL cache for the archive-level inventory listing |
+| `src/memories_crawl/filters.py` | Case-insensitive name/code matching for `--kantoor` |
 | `src/memories_crawl/nationaalarchief.py` | Zuid-Holland: scrape viewer pages, download via UUID |
 | `src/memories_crawl/drentsarchief.py` | Drenthe: Memorix REST API, deed→asset chain |
 | `src/memories_crawl/bhic.py` | Noord-Brabant (BHIC): Memorix REST API, register→asset chain |
@@ -89,6 +134,45 @@ downloads nothing).
 | `src/memories_crawl/zeeland.py` | Zeeland: Playwright-based MAIS hybrid (inv3 discovery + inv2 strip harvest) |
 | `src/memories_crawl/friesland.py` | Friesland: Tresoar / AlleFriezen Memorix REST API, register→deed→person chain |
 | `src/memories_crawl/gelderland.py` | Gelderland: Playwright-based MAIS, one micode per kantoor (21 codes), strip auto-loads on inv2 minr |
+
+## Filters: `--invnr` and `--kantoor`
+
+`--invnr` (repeatable) narrows the download to specific inventarisnummers.
+`--kantoor` (repeatable) narrows the *search* to specific kantoren, and is
+applied **before** any discovery or token-harvest work — an inventarisnummer
+belongs to exactly one kantoor, so without it a single-register fetch walks all
+21 Gelderland kantoren to find one (issue #24).
+
+`src/memories_crawl/filters.py` does the matching: case-insensitive, whitespace
+trimmed, leading zeros ignored for numeric identifiers (`--kantoor 22` finds
+Gelderland's `0022`). A value matches when it equals *any* label the pipeline
+offers for that kantoor — the name from the `kantoor` column of `--list-invnrs`
+plus, where the archive has one, the archief-code (gelderland `0026`, bhic
+`036.03.04`, limburg `07.D03`), the micode (utrechtsarchief `337-2`), the minr
+(overijssel, zeeland, noordholland) or the archiefnummer (drentsarchief).
+`nationaalarchief` has no kantoor subdivision; the CLI reports the flag as
+ignored rather than pretending to apply it.
+
+Every pipeline's `main()` takes `kantoren: set[str] | None = None` (the raw
+user strings — pass them to `filters.normalize()` once at the top) except
+`nationaalarchief`.
+
+**Cache-driven skipping.** Where a cache can *prove* a kantoor holds none of the
+requested invnrs, the kantoor is skipped before any network work even without
+`--kantoor`: gelderland and limburg consult `inventory_{code}.json`, overijssel
+and zeeland the kantoor's *complete* token cache (a partial harvest is not
+evidence). A missing cache must always fall through to normal discovery —
+absence of evidence is never evidence of absence.
+
+**Warnings.** A filter that matches nothing across the whole archive prints a
+`WARNING` line, so `--invnr 99999` is distinguishable from a successful no-op.
+A kantoor already recorded in `done.txt` counts as matched.
+
+**`done.txt` interaction.** The markers are keyed by kantoor, which is coarser
+than `--invnr` but exactly as coarse as `--kantoor`: a `--kantoor` run may
+record the kantoren it fully processed, a run with `--invnr` set may not.
+`tests/test_invnr_filter.py` (issue #22) and `tests/test_kantoor_filter.py`
+(issue #24) are the regression tests for that rule.
 
 ## Exclusion rule
 
@@ -157,6 +241,11 @@ Each pipeline was live-tested against the real APIs and servers.
 
 Scans are in a `<script data-drupal-selector="drupal-settings-json">` JSON blob. Parse `settings["viewer"]["response"]["scans"]`. Each scan has `{"id": UUID, "label": "NL-HaNA_...", "default": {"url": "https://service.archief.nl/api/file/v1/default/{UUID}"}}`. Download via `default.url`.
 
+The invnrs parsed out of the EAD XML are cached in
+`<out-dir>/.cache/nationaalarchief/inventory.json`, so the XML is downloaded at
+most once a month. `_fallback_invnrs()` is deliberately never cached — see
+*Archive-level inventory listing* above.
+
 ### Drents Archief API
 
 ```
@@ -180,6 +269,11 @@ so `--invnr N` may select several registers.
 single request. Do **not** re-introduce the old person-index walk
 (`/person?q=*:*` over ~1,064 pages) — see issue #28.
 
+The listing is cached in `<out-dir>/.cache/drentsarchief/registers.json`, and
+`--invnr` is pushed into the query as `search_s_inventarisnummer` — see
+*Archive-level inventory listing* above. The win is small here (the walk was
+already one request), but it keeps the three Memorix pipelines identical.
+
 ### BHIC (Noord-Brabant) API
 
 Same Memorix backend, **different tenant key**, and scans live at the **register**
@@ -198,6 +292,11 @@ Full image:    asset[].download  (https://images.memorix.nl/bhic/download/fullsi
 1,896 registers total. Code prefixes are `036.03.01..19` (Memories van successie,
 kantoor X) plus `021.13` (Memories van successie Brabant). Tafel V-bis is not
 indexed at BHIC, but `_is_tafel()` filters defensively just in case.
+
+The `rows=100` walk is 19 requests, ~5.2 s of which most is the deliberate
+`REQUEST_SLEEP`. It is cached in `<out-dir>/.cache/bhic/registers.json`, and an
+`--invnr` run skips it entirely via `search_s_inventarisnummer` (~18 ms) — see
+*Archive-level inventory listing* above.
 
 ### Friesland (Tresoar / AlleFriezen) – Memorix REST API
 
@@ -244,6 +343,11 @@ Kantoor is extracted from the register `naam` field (e.g. "Sneek" from
 
 **Resume**: `<out-dir>/.cache/friesland/friesland_progress.csv` tracks completed registers. Existing
 per-person directories (with `metadata.json`) are skipped on reruns.
+
+**Inventory cache**: the 12-page register walk (~3.1 s) is cached in
+`<out-dir>/.cache/friesland/registers.json`, and an `--invnr` run replaces it
+with one `search_s_inventarisnummer` request (~23 ms) — see *Archive-level
+inventory listing* above.
 
 ### Limburg (RHCL) – archieven.nl MAIS
 
@@ -323,6 +427,8 @@ Partial token caches allow resuming interrupted harvest runs.
 so a filtered run neither reads nor writes it: ``--invnr`` runs are stateless with
 respect to unit completion, and per-file existence checks keep repeat runs cheap.
 A filter that matches nothing anywhere prints a warning instead of exiting silently.
+``--kantoor`` is exactly as coarse as the marker, so a ``--kantoor``-only run
+still records the kantoren it finished; adding ``--invnr`` suppresses that again.
 
 ### Zeeland (Zeeuws Archief) – MAIS token extraction
 
@@ -380,6 +486,8 @@ Partial token caches allow resuming interrupted harvest runs.
 so a filtered run neither reads nor writes it: ``--invnr`` runs are stateless with
 respect to unit completion, and per-file existence checks keep repeat runs cheap.
 A filter that matches nothing anywhere prints a warning instead of exiting silently.
+``--kantoor`` is exactly as coarse as the marker, so a ``--kantoor``-only run
+still records the kantoren it finished; adding ``--invnr`` suppresses that again.
 The per-kantoor token cache is suppressed the same way, since it claims to hold
 every page in the kantoor; a warm cache is still narrowed to the requested invnrs.
 
@@ -453,6 +561,8 @@ here.
 so a filtered run neither reads nor writes it: ``--invnr`` runs are stateless with
 respect to unit completion, and per-file existence checks keep repeat runs cheap.
 A filter that matches nothing anywhere prints a warning instead of exiting silently.
+``--kantoor`` is exactly as coarse as the marker, so a ``--kantoor``-only run
+still records the kantoren it finished; adding ``--invnr`` suppresses that again.
 The per-kantoor code token cache is suppressed the same way, since it claims to hold
 every page in the kantoor code; a warm cache is still narrowed to the requested invnrs.
 

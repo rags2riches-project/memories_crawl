@@ -44,15 +44,21 @@ from pathlib import Path
 
 import requests
 
-from memories_crawl import paths
+from memories_crawl import filters, paths, regcache
 from memories_crawl.summary import PageTally, RunSummary
 
 API_BASE = "https://webservices.memorix.nl/genealogy"
 API_KEY = "a85387a2-fdb2-44d0-8209-3635e59c537e"
 REGISTER_FILTER = 'search_s_brontype:"Memorie van Successie"'
+#: Memorix indexes the inventarisnummer as an exact-match string field, so the
+#: ``--invnr`` filter is pushed into the query (issue #25).  The win is small
+#: here -- ``rows=1000`` already resolves the whole inventory in one request --
+#: but it keeps the three Memorix pipelines doing the same thing.
+INVNR_FIELD = "search_s_inventarisnummer"
 PAGE_SIZE = 1000
 ARCHIVE = "drentsarchief"
 PROGRESS_CSV_NAME = "drentsarchief_deeds.csv"
+REGISTER_CACHE_NAME = "registers.json"
 USER_AGENT = "memories-crawl/1.0"
 
 ARCHIVE_NAME = "Drents Archief"
@@ -126,9 +132,46 @@ def _register_gemeente(register: dict) -> str:
     return (register.get("metadata") or {}).get("gemeente") or ""
 
 
-def _collect_registers(session: requests.Session) -> list[dict]:
-    """Return every Memorie van Successie register, Tafel V-bis excluded."""
-    registers = _paginate(session, "/register", REGISTER_FILTER, "register")
+def _escape_fq(value: str) -> str:
+    """Quote-escape a user-supplied value for use inside an ``fq`` phrase."""
+    return value.replace("\\", "\\\\").replace('"', '\\"')
+
+
+def _register_fq(invnrs: set[str]) -> str:
+    """Return the register filter query narrowed to ``invnrs`` server-side.
+
+    Verified against the live API to select exactly the registers the old
+    client-side filter kept, including the dotted numbers Drenthe uses
+    (``15.2``), and never a numeric prefix of another.
+    """
+    values = " OR ".join(f'"{_escape_fq(v)}"' for v in sorted(invnrs))
+    return f"{REGISTER_FILTER} AND {INVNR_FIELD}:({values})"
+
+
+def _collect_registers(
+    session: requests.Session,
+    invnrs: set[str] | None = None,
+    refresh_cache: bool = False,
+) -> list[dict]:
+    """Return the Memorie van Successie registers, Tafel V-bis excluded.
+
+    ``invnrs`` narrows the query server-side; without it the whole listing is
+    fetched and cached (see :mod:`memories_crawl.regcache`).  The Tafel V-bis
+    rule is applied to whatever comes back rather than to what is stored, so a
+    change to :func:`_is_tafel` takes effect on a warm cache too.
+    """
+    if invnrs is not None:
+        registers = (
+            _paginate(session, "/register", _register_fq(invnrs), "register") if invnrs else []
+        )
+    else:
+        registers = regcache.load_or_collect(
+            ARCHIVE,
+            REGISTER_CACHE_NAME,
+            lambda: _paginate(session, "/register", REGISTER_FILTER, "register"),
+            key=REGISTER_FILTER,
+            refresh=refresh_cache,
+        )
     return [r for r in registers if not _is_tafel(r)]
 
 
@@ -229,7 +272,11 @@ def main(
     list_invnrs: bool = False,
     csv_out: str | None = None,
     out_dir: Path | None = None,
+    kantoren: set[str] | None = None,
+    refresh_cache: bool = False,
 ) -> RunSummary | None:
+    kantoor_filter = filters.normalize(kantoren)
+
     if out_dir is not None:
         paths.set_out_dir(out_dir)
     output_dir = paths.archive_dir(ARCHIVE)
@@ -238,12 +285,33 @@ def main(
     session = _session()
 
     print("Collecting Drents Archief Memorie van Successie registers …", flush=True)
-    registers = _collect_registers(session)
-    print(f"Found {len(registers)} registers.")
-
-    if invnrs is not None:
-        registers = [r for r in registers if _register_invnr(r) in invnrs]
-        print(f"Filtered to {len(registers)} registers matching --invnr.")
+    # Keep the no-option call shape for callers that substitute the collector,
+    # while the real collector still uses its cache by default.
+    if invnrs is None and not refresh_cache:
+        registers = _collect_registers(session)
+    else:
+        registers = _collect_registers(session, invnrs=invnrs, refresh_cache=refresh_cache)
+    if kantoor_filter is not None:
+        registers = [
+            r
+            for r in registers
+            if filters.matches(
+                kantoor_filter,
+                _register_gemeente(r),
+                (r.get("metadata") or {}).get("archiefnummer") or "",
+            )
+        ]
+    if invnrs is not None or kantoor_filter is not None:
+        print(
+            f"Filtered to {len(registers)} registers matching {filters.describe(invnrs, kantoren)}."
+        )
+        if not registers:
+            print(
+                f"\nWARNING: {filters.describe(invnrs, kantoren)} matched no "
+                "register in the Drents Archief collection."
+            )
+    else:
+        print(f"Found {len(registers)} registers.")
 
     if list_invnrs:
         _list_registers(registers, csv_out=csv_out)

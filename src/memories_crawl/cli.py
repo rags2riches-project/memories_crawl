@@ -33,11 +33,20 @@ def _run_friesland(
     list_invnrs: bool = False,
     csv_out: str | None = None,
     out_dir: Path | None = None,
+    kantoren: set[str] | None = None,
+    refresh_cache: bool = False,
 ) -> RunSummary | None:
     print("=== Friesland pipeline (Tresoar / AlleFriezen, Memorix API) ===")
     from memories_crawl.friesland import main as run
 
-    return run(invnrs=invnrs, list_invnrs=list_invnrs, csv_out=csv_out, out_dir=out_dir)
+    return run(
+        invnrs=invnrs,
+        list_invnrs=list_invnrs,
+        csv_out=csv_out,
+        out_dir=out_dir,
+        kantoren=kantoren,
+        refresh_cache=refresh_cache,
+    )
 
 
 def _run_nationaalarchief(
@@ -45,11 +54,24 @@ def _run_nationaalarchief(
     list_invnrs: bool = False,
     csv_out: str | None = None,
     out_dir: Path | None = None,
+    kantoren: set[str] | None = None,
+    refresh_cache: bool = False,
 ) -> RunSummary | None:
     print("=== Nationaal Archief pipeline (Zuid-Holland, access 3.06.05) ===")
     from memories_crawl.nationaalarchief import main as run
 
-    return run(invnrs=invnrs, list_invnrs=list_invnrs, csv_out=csv_out, out_dir=out_dir)
+    # 3.06.05 is a single flat inventory range, not a per-kantoor tree, so
+    # there is nothing for --kantoor to select; say so instead of pretending
+    # the filter was applied.
+    if kantoren:
+        print("  NOTE: nationaalarchief has no kantoor subdivision; --kantoor is ignored.")
+    return run(
+        invnrs=invnrs,
+        list_invnrs=list_invnrs,
+        csv_out=csv_out,
+        out_dir=out_dir,
+        refresh_cache=refresh_cache,
+    )
 
 
 def _run_drentsarchief(
@@ -57,11 +79,20 @@ def _run_drentsarchief(
     list_invnrs: bool = False,
     csv_out: str | None = None,
     out_dir: Path | None = None,
+    kantoren: set[str] | None = None,
+    refresh_cache: bool = False,
 ) -> RunSummary | None:
     print("=== Drents Archief pipeline (Memorix API) ===")
     from memories_crawl.drentsarchief import main as run
 
-    return run(invnrs=invnrs, list_invnrs=list_invnrs, csv_out=csv_out, out_dir=out_dir)
+    return run(
+        invnrs=invnrs,
+        list_invnrs=list_invnrs,
+        csv_out=csv_out,
+        out_dir=out_dir,
+        kantoren=kantoren,
+        refresh_cache=refresh_cache,
+    )
 
 
 def _run_bhic(
@@ -69,11 +100,20 @@ def _run_bhic(
     list_invnrs: bool = False,
     csv_out: str | None = None,
     out_dir: Path | None = None,
+    kantoren: set[str] | None = None,
+    refresh_cache: bool = False,
 ) -> RunSummary | None:
     print("=== BHIC pipeline (Noord-Brabant, Memorix API) ===")
     from memories_crawl.bhic import main as run
 
-    return run(invnrs=invnrs, list_invnrs=list_invnrs, csv_out=csv_out, out_dir=out_dir)
+    return run(
+        invnrs=invnrs,
+        list_invnrs=list_invnrs,
+        csv_out=csv_out,
+        out_dir=out_dir,
+        kantoren=kantoren,
+        refresh_cache=refresh_cache,
+    )
 
 
 def _run_overijssel(
@@ -81,11 +121,18 @@ def _run_overijssel(
     list_invnrs: bool = False,
     csv_out: str | None = None,
     out_dir: Path | None = None,
+    kantoren: set[str] | None = None,
 ) -> RunSummary | None:
     print("=== Overijssel pipeline (INCOMPLETE – see python/overijssel.py) ===")
     from memories_crawl.overijssel import main as run
 
-    return run(invnrs=invnrs, list_invnrs=list_invnrs, csv_out=csv_out, out_dir=out_dir)
+    return run(
+        invnrs=invnrs,
+        list_invnrs=list_invnrs,
+        csv_out=csv_out,
+        out_dir=out_dir,
+        kantoren=kantoren,
+    )
 
 
 def _run_utrechtsarchief(
@@ -93,11 +140,18 @@ def _run_utrechtsarchief(
     list_invnrs: bool = False,
     csv_out: str | None = None,
     out_dir: Path | None = None,
+    kantoren: set[str] | None = None,
 ) -> RunSummary | None:
     print("=== Utrechts Archief pipeline ===")
     from memories_crawl.utrechtsarchief import main as run
 
-    return run(invnrs=invnrs, list_invnrs=list_invnrs, csv_out=csv_out, out_dir=out_dir)
+    return run(
+        invnrs=invnrs,
+        list_invnrs=list_invnrs,
+        csv_out=csv_out,
+        out_dir=out_dir,
+        kantoren=kantoren,
+    )
 
 
 def _run_limburg(
@@ -105,11 +159,18 @@ def _run_limburg(
     list_invnrs: bool = False,
     csv_out: str | None = None,
     out_dir: Path | None = None,
+    kantoren: set[str] | None = None,
 ) -> RunSummary | None:
     print("=== Limburg pipeline (RHCL, archieven.nl MAIS) ===")
     from memories_crawl.limburg import main as run
 
-    return run(invnrs=invnrs, list_invnrs=list_invnrs, csv_out=csv_out, out_dir=out_dir)
+    return run(
+        invnrs=invnrs,
+        list_invnrs=list_invnrs,
+        csv_out=csv_out,
+        out_dir=out_dir,
+        kantoren=kantoren,
+    )
 
 
 def _run_noordholland(
@@ -117,11 +178,18 @@ def _run_noordholland(
     list_invnrs: bool = False,
     csv_out: str | None = None,
     out_dir: Path | None = None,
+    kantoren: set[str] | None = None,
 ) -> RunSummary | None:
     print("=== Noord-Holland pipeline (Noord-Hollands Archief) ===")
     from memories_crawl.noordholland import main as run
 
-    return run(invnrs=invnrs, list_invnrs=list_invnrs, csv_out=csv_out, out_dir=out_dir)
+    return run(
+        invnrs=invnrs,
+        list_invnrs=list_invnrs,
+        csv_out=csv_out,
+        out_dir=out_dir,
+        kantoren=kantoren,
+    )
 
 
 def _run_zeeland(
@@ -129,11 +197,18 @@ def _run_zeeland(
     list_invnrs: bool = False,
     csv_out: str | None = None,
     out_dir: Path | None = None,
+    kantoren: set[str] | None = None,
 ) -> RunSummary | None:
     print("=== Zeeland pipeline (Zeeuws Archief) ===")
     from memories_crawl.zeeland import main as run
 
-    return run(invnrs=invnrs, list_invnrs=list_invnrs, csv_out=csv_out, out_dir=out_dir)
+    return run(
+        invnrs=invnrs,
+        list_invnrs=list_invnrs,
+        csv_out=csv_out,
+        out_dir=out_dir,
+        kantoren=kantoren,
+    )
 
 
 def _run_gelderland(
@@ -141,11 +216,18 @@ def _run_gelderland(
     list_invnrs: bool = False,
     csv_out: str | None = None,
     out_dir: Path | None = None,
+    kantoren: set[str] | None = None,
 ) -> RunSummary | None:
     print("=== Gelderland pipeline (Gelders Archief) ===")
     from memories_crawl.gelderland import main as run
 
-    return run(invnrs=invnrs, list_invnrs=list_invnrs, csv_out=csv_out, out_dir=out_dir)
+    return run(
+        invnrs=invnrs,
+        list_invnrs=list_invnrs,
+        csv_out=csv_out,
+        out_dir=out_dir,
+        kantoren=kantoren,
+    )
 
 
 PIPELINES = {
@@ -160,6 +242,11 @@ PIPELINES = {
     "zeeland": _run_zeeland,
     "gelderland": _run_gelderland,
 }
+
+#: Pipelines whose archive-level inventory listing is cached on disk, and which
+#: therefore accept ``--refresh-cache``.  The Playwright-driven ones keep their
+#: own inventory/token caches and are not covered by that flag.
+CACHED_LISTING_PIPELINES = frozenset({"friesland", "nationaalarchief", "drentsarchief", "bhic"})
 
 
 def main() -> None:
@@ -179,6 +266,15 @@ def main() -> None:
         help="Only scrape a specific inventarisnummer. Repeatable.",
     )
     parser.add_argument(
+        "--kantoor",
+        dest="kantoren",
+        action="append",
+        default=None,
+        help="Restrict to one or more kantoren. Repeatable. Names match the "
+        "kantoor column of --list-invnrs; where an archive also exposes a code "
+        "or minr for the kantoor, that works too. Matching is case-insensitive.",
+    )
+    parser.add_argument(
         "--list-invnrs",
         action="store_true",
         default=False,
@@ -196,6 +292,16 @@ def main() -> None:
         ),
     )
     parser.add_argument(
+        "--refresh-cache",
+        action="store_true",
+        default=False,
+        help=(
+            "Re-collect the archive-level inventory listing instead of reusing "
+            "the cached one (friesland, nationaalarchief, drentsarchief, bhic; "
+            "the cache expires after 30 days by itself)."
+        ),
+    )
+    parser.add_argument(
         "--csv",
         dest="csv_out",
         nargs="?",
@@ -210,23 +316,28 @@ def main() -> None:
     print(f"Output root: {out_dir.resolve()}")
 
     invnr_filter: set[str] | None = set(args.invnrs) if args.invnrs else None
+    kantoor_filter: set[str] | None = set(args.kantoren) if args.kantoren else None
     targets = list(PIPELINES) if args.pipeline == "all" else [args.pipeline]
     summaries: list[RunSummary] = []
     for name in targets:
         csv_path: str | None = None
         if args.csv_out is not None:
             csv_path = f"{name}_invnrs.csv" if args.csv_out == "__default__" else args.csv_out
+        kwargs: dict = {
+            "invnrs": invnr_filter,
+            "list_invnrs": args.list_invnrs,
+            "csv_out": csv_path,
+            "out_dir": out_dir,
+        }
+        kwargs["kantoren"] = kantoor_filter
+        if name in CACHED_LISTING_PIPELINES:
+            kwargs["refresh_cache"] = args.refresh_cache
         failure: Exception | None = None
         # collect() sees the pipeline's summary even if the call never returns,
         # so a run that dies halfway still reports what it managed to download.
         with collect() as collected:
             try:
-                PIPELINES[name](
-                    invnrs=invnr_filter,
-                    list_invnrs=args.list_invnrs,
-                    csv_out=csv_path,
-                    out_dir=out_dir,
-                )
+                PIPELINES[name](**kwargs)
             except Exception as exc:
                 failure = exc
                 print(f"ERROR in {name}: {exc}", file=sys.stderr)

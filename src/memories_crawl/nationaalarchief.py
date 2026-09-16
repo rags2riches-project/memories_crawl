@@ -24,11 +24,12 @@ from pathlib import Path
 
 import requests
 
-from memories_crawl import paths
+from memories_crawl import filters, paths, regcache
 from memories_crawl.summary import PageTally, RunSummary
 
 ACCESS_NUMBER = "3.06.05"
 EAD_XML_URL = "https://www.nationaalarchief.nl/onderzoeken/archief/3.06.05/download/xml"
+INVENTORY_CACHE_NAME = "inventory.json"
 # Base URL pattern for inventory viewer pages
 VIEWER_URL_TPL = (
     "https://www.nationaalarchief.nl/onderzoeken/archief/3.06.05/invnr/@{invnr}"
@@ -171,17 +172,32 @@ def _fallback_invnrs() -> list[int]:
     return sorted(set(result))
 
 
-def _fetch_inventory_numbers(session: requests.Session) -> list[int]:
-    """Fetch the EAD XML and parse section 2.4 Memories invnrs.
+def _collect_inventory_numbers(session: requests.Session) -> list[int]:
+    """Download the EAD XML and parse section 2.4 Memories invnrs."""
+    resp = session.get(EAD_XML_URL, timeout=120)
+    resp.raise_for_status()
+    invnrs = _parse_ead_invnrs(resp.content)
+    if not invnrs:
+        raise ValueError("no section 2.4 inventory numbers in the EAD XML")
+    return invnrs
 
-    Falls back to the hardcoded list if the download or parse fails.
+
+def _fetch_inventory_numbers(session: requests.Session, refresh_cache: bool = False) -> list[int]:
+    """Return the section 2.4 Memories invnrs, downloading the EAD XML once.
+
+    The parsed listing is cached for :data:`regcache.TTL_SECONDS` so repeated
+    invocations do not re-download the inventory (issue #25).  A failed fetch
+    or parse falls back to the hardcoded list, which is deliberately *not*
+    cached: a transient outage must not pin the fallback in place for a month.
     """
     try:
-        resp = session.get(EAD_XML_URL, timeout=120)
-        resp.raise_for_status()
-        invnrs = _parse_ead_invnrs(resp.content)
-        if invnrs:
-            return invnrs
+        return regcache.load_or_collect(
+            ARCHIVE,
+            INVENTORY_CACHE_NAME,
+            lambda: _collect_inventory_numbers(session),
+            key=EAD_XML_URL,
+            refresh=refresh_cache,
+        )
     except Exception as exc:
         print(f"  Warning: EAD XML fetch/parse failed ({exc}); using fallback list.")
     return _fallback_invnrs()
@@ -298,6 +314,7 @@ def main(
     list_invnrs: bool = False,
     csv_out: str | None = None,
     out_dir: Path | None = None,
+    refresh_cache: bool = False,
 ) -> RunSummary | None:
     if out_dir is not None:
         paths.set_out_dir(out_dir)
@@ -307,12 +324,17 @@ def main(
     output_dir.mkdir(parents=True, exist_ok=True)
 
     print("Fetching inventory numbers from EAD XML …")
-    inv_numbers = _fetch_inventory_numbers(session)
+    inv_numbers = _fetch_inventory_numbers(session, refresh_cache=refresh_cache)
     print(f"Found {len(inv_numbers)} inventory items: {inv_numbers[0]}–{inv_numbers[-1]}")
 
     if invnrs is not None:
         inv_numbers = [n for n in inv_numbers if str(n) in invnrs]
         print(f"Filtered to {len(inv_numbers)} inventory numbers matching --invnr.")
+        if not inv_numbers:
+            print(
+                f"\nWARNING: {filters.describe(invnrs)} matched no "
+                "inventarisnummer in access 3.06.05."
+            )
 
     if list_invnrs:
         _list_inventory(inv_numbers, csv_out=csv_out)

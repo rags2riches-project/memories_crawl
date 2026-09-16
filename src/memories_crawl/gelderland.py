@@ -75,7 +75,7 @@ from pathlib import Path
 
 import requests
 
-from memories_crawl import paths
+from memories_crawl import filters, paths
 from memories_crawl.summary import PageTally, RunSummary, announce
 
 # ---------------------------------------------------------------------------
@@ -327,6 +327,18 @@ def _load_json(path: Path) -> object | None:
 # ---------------------------------------------------------------------------
 
 
+def _cached_inventory_holds(code: str, invnrs: set[str]) -> bool | None:
+    """Whether ``code``'s cached inventory contains any of ``invnrs``.
+
+    ``None`` when there is no cache: an absent cache is not evidence that the
+    kantoor lacks the invnr, so the caller must fall through to discovery.
+    """
+    cached = _load_json(_inventory_path(code))
+    if not isinstance(cached, list) or not cached:
+        return None
+    return any(str(it.get("invnr")) in invnrs for it in cached)
+
+
 def _discover_invnrs(kantoor: str, code: str) -> list[dict]:
     """Return [{invnr, text, minr, hasScan}, ...] for one kantoor, cached."""
     cached = _load_json(_inventory_path(code))
@@ -537,12 +549,23 @@ def _write_metadata(
 # ---------------------------------------------------------------------------
 
 
+def _warn_no_match(invnrs: set[str] | None, kantoren: set[str] | None) -> None:
+    """Tell the caller a filter selected nothing, rather than no-op silently."""
+    print(
+        f"\nWARNING: {filters.describe(invnrs, kantoren)} matched no "
+        f"inventarisnummer in any of the {len(KANTOREN)} kantoren."
+    )
+
+
 def main(
     invnrs: set[str] | None = None,
     list_invnrs: bool = False,
     csv_out: str | None = None,
     out_dir: Path | None = None,
+    kantoren: set[str] | None = None,
 ) -> RunSummary | None:
+    kantoor_filter = filters.normalize(kantoren)
+
     if out_dir is not None:
         paths.set_out_dir(out_dir)
     output_dir = paths.archive_dir(ARCHIVE)
@@ -556,6 +579,10 @@ def main(
     if list_invnrs:
         csv_rows: list[dict] = []
         for kantoor, code in KANTOREN.items():
+            if not filters.matches(kantoor_filter, kantoor, code):
+                continue
+            if invnrs is not None and _cached_inventory_holds(code, invnrs) is False:
+                continue
             discovered = _discover_invnrs(kantoor, code)
             if invnrs is not None:
                 discovered = [it for it in discovered if str(it["invnr"]) in invnrs]
@@ -574,6 +601,8 @@ def main(
                             "description": it["text"],
                         }
                     )
+        if (invnrs is not None or kantoor_filter is not None) and not csv_rows:
+            _warn_no_match(invnrs, kantoren)
         print()
         if csv_out and csv_rows:
             with open(csv_out, "w", newline="", encoding="utf-8") as f:
@@ -605,11 +634,22 @@ def main(
     matched_any = False
 
     for k_idx, (kantoor, code) in enumerate(KANTOREN.items()):
+        # Both filters are applied before any discovery work: --kantoor by name
+        # or code, --invnr through the cached inventory where one exists (a
+        # missing cache proves nothing, so that kantoor is still visited).
+        if not filters.matches(kantoor_filter, kantoor, code):
+            continue
+        if invnrs is not None and _cached_inventory_holds(code, invnrs) is False:
+            continue
+
         print(f"\n{'=' * 60}")
         print(f"  [{k_idx + 1}/{len(KANTOREN)}] Kantoor {kantoor}  (code {code})")
         print(f"{'=' * 60}")
 
         if code in done:
+            # The filter did select this kantoor -- it is simply finished, so
+            # this must not count towards the "matched nothing" warning.
+            matched_any = True
             print("  Already fully downloaded, skipping.")
             continue
 
@@ -685,11 +725,8 @@ def main(
 
         mark_done(code)
 
-    if filtered and not matched_any:
-        print(
-            f"\nWARNING: --invnr {', '.join(sorted(invnrs))} matched no "
-            f"inventarisnummer in any of the {len(KANTOREN)} kantoren."
-        )
+    if (filtered or kantoor_filter is not None) and not matched_any:
+        _warn_no_match(invnrs, kantoren)
 
     summary.report()
     return summary
