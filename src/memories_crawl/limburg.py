@@ -61,6 +61,7 @@ from pathlib import Path
 import requests
 
 from memories_crawl import paths
+from memories_crawl.summary import PageTally, RunSummary, announce
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -450,7 +451,7 @@ def main(
     list_invnrs: bool = False,
     csv_out: str | None = None,
     out_dir: Path | None = None,
-) -> None:
+) -> RunSummary | None:
     if out_dir is not None:
         paths.set_out_dir(out_dir)
     output_dir = paths.archive_dir(ARCHIVE)
@@ -511,6 +512,8 @@ def main(
     # individual page navigations reuse the same browser context.
     from playwright.sync_api import sync_playwright  # noqa: PLC0415
 
+    summary = RunSummary(ARCHIVE, "Limburg", unit_name="archive codes")
+
     for code, items in inventories.items():
         if not items:
             print(f"\n  {code}: no digitized items, skipping.")
@@ -539,26 +542,38 @@ def main(
         else:
             print(f"\n  {code}: all token caches present, skipping Playwright.")
 
-        # Download phase.
+        # Download phase. The token caches already hold every page of every
+        # register, so the size of what follows is known before it starts.
         print(f"\n  {code}: downloading scans …")
-        totals = {"downloaded": 0, "exists": 0, "missing": 0}
+        n_pages = sum(len(_load_json(_tokens_cache_path(code, it["invnr"])) or []) for it in items)
+        announce(n_pages, len(items), code)
+        summary.units += 1
+        summary.registers += len(items)
+
+        code_tally = PageTally()
         for it in items:
             tokens = _load_json(_tokens_cache_path(code, it["invnr"])) or []
             dest_dir = output_dir / code / str(it["invnr"])
             _write_metadata(dest_dir, code, it, len(tokens))
+            tally = PageTally()
             for tok in tokens:
                 url = _image_url(code, tok)
                 fn = f"NL-MtHCL_{code}_{tok['invnr']}_{tok['page']:04d}.png"
-                status = _download_one(session, url, dest_dir / fn)
-                totals[status] += 1
-                if status == "downloaded":
+                dest = dest_dir / fn
+                if tally.record(_download_one(session, url, dest), dest) == "downloaded":
                     time.sleep(0.10)
-        print(
-            f"    {code}: {totals['downloaded']} new, "
-            f"{totals['exists']} existing, {totals['missing']} missing"
-        )
+            print(
+                f"    invnr {it['invnr']} ({it['name']}) {tally.describe(len(tokens))}",
+                flush=True,
+            )
+            # Fold in per register, not per code, so a run that dies midway
+            # still reports everything it downloaded.
+            code_tally += tally
+            summary.pages += tally
+        print(f"    {code}: {code_tally.describe()}")
 
-    print("\nDone (Limburg).")
+    summary.report()
+    return summary
 
 
 if __name__ == "__main__":

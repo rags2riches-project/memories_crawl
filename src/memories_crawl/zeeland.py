@@ -48,6 +48,7 @@ from pathlib import Path
 import requests
 
 from memories_crawl import paths
+from memories_crawl.summary import PageTally, RunSummary, announce
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -520,7 +521,7 @@ def main(
     list_invnrs: bool = False,
     csv_out: str | None = None,
     out_dir: Path | None = None,
-) -> None:
+) -> RunSummary | None:
     if out_dir is not None:
         paths.set_out_dir(out_dir)
     output_dir = paths.archive_dir(ARCHIVE)
@@ -543,6 +544,8 @@ def main(
     print(f"Processing {len(kantoren)} kantoren")
     print(f"{'=' * 60}")
 
+    summary = RunSummary(ARCHIVE, "Zeeland", unit_name="kantoren")
+
     # done.txt records whole kantoren, which is only ever accurate for an
     # unfiltered run: under --invnr we fetch a subset, so writing the marker
     # would make every later run skip the rest of the kantoor.
@@ -561,7 +564,6 @@ def main(
             f.write(f"{key}\n")
 
     matched_any = False
-    grand_downloaded = grand_skipped = grand_missing = 0
 
     for k_idx, k_data in enumerate(kantoren):
         kantoor = k_data["name"]
@@ -631,8 +633,11 @@ def main(
                 invnr_texts[p["invnr"]] = p.get("inv_text", "")
 
         print(f"  {len(invnr_pages)} inventarisnummers with scans")
+        announce(len(pages), len(invnr_pages), kantoor)
+        summary.units += 1
+        summary.registers += len(invnr_pages)
 
-        downloaded = skipped = missing = 0
+        kantoor_tally = PageTally()
         for invnr, inv_pages in sorted(invnr_pages.items()):
             inv_text = invnr_texts.get(invnr, "")
             safe_kantoor = kantoor.replace(". ", "_").replace(" ", "_")[:60]
@@ -641,7 +646,7 @@ def main(
 
             _write_metadata(dest_dir, kantoor, invnr, inv_text, len(inv_pages))
 
-            inv_downloaded = inv_skipped = inv_missing = 0
+            tally = PageTally()
             for p in sorted(inv_pages, key=lambda x: (x["page"], x.get("slug", ""))):
                 url = _fullsize_url(p["thumb_url"])
                 slug = p.get("slug", "")
@@ -649,29 +654,17 @@ def main(
                     dest = dest_dir / f"{slug}_{p['page']:04d}.jpg"
                 else:
                     dest = dest_dir / f"{p['page']:04d}.jpg"
-                status = _download_file(session, url, dest)
-                if status == "downloaded":
-                    inv_downloaded += 1
-                elif status == "exists":
-                    inv_skipped += 1
-                else:
-                    inv_missing += 1
+                tally.record(_download_file(session, url, dest), dest)
                 time.sleep(0.15)
 
-            print(
-                f"{len(inv_pages)} pages "
-                f"({inv_downloaded} new, {inv_skipped} existing, {inv_missing} missing)"
-            )
+            print(tally.describe(len(inv_pages)))
 
-            downloaded += inv_downloaded
-            skipped += inv_skipped
-            missing += inv_missing
+            # Fold in per register, not per kantoor, so a run that dies midway
+            # still reports everything it downloaded.
+            kantoor_tally += tally
+            summary.pages += tally
 
-        print(f"  Kantoor totals: {downloaded} new, {skipped} existing, {missing} missing")
-
-        grand_downloaded += downloaded
-        grand_skipped += skipped
-        grand_missing += missing
+        print(f"  Kantoor totals: {kantoor_tally.describe()}")
 
         mark_done(str(kantoor_minr))
 
@@ -691,11 +684,8 @@ def main(
             print(f"Wrote {len(csv_rows)} rows to {csv_out}\n")
         return
 
-    print("\n===== COMPLETE =====")
-    print(
-        f"Total: {grand_downloaded} downloaded, {grand_skipped} existing, {grand_missing} missing"
-    )
-    print("Done (Zeeland).")
+    summary.report()
+    return summary
 
 
 if __name__ == "__main__":

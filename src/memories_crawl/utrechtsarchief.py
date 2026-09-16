@@ -44,6 +44,7 @@ from pathlib import Path
 import requests
 
 from memories_crawl import paths
+from memories_crawl.summary import PageTally, RunSummary, announce
 
 ARCHIVE_NAME = "Het Utrechts Archief"
 MAIS_ADT = "39"
@@ -468,7 +469,7 @@ def main(
     list_invnrs: bool = False,
     csv_out: str | None = None,
     out_dir: Path | None = None,
-) -> None:
+) -> RunSummary | None:
     if out_dir is not None:
         paths.set_out_dir(out_dir)
     output_dir = paths.archive_dir(ARCHIVE)
@@ -478,6 +479,8 @@ def main(
     session.headers["User-Agent"] = USER_AGENT
 
     csv_rows: list[dict] = []
+    summary = RunSummary(ARCHIVE, "Utrecht", unit_name="kantoren")
+    kantoren_seen: set[str] = set()
 
     for kantoor, micode in KANTOREN.items():
         print(f"\n{'=' * 60}")
@@ -548,11 +551,24 @@ def main(
                     )
                 continue
 
-            downloaded = skipped = missing = 0
+            announce(
+                sum(len(v) for v in invnr_pages.values()),
+                len(invnr_pages),
+                f"{kantoor}, section {section_idx + 1}",
+                indent="    ",
+            )
+            kantoren_seen.add(kantoor)
+            summary.units = len(kantoren_seen)
+            summary.registers += len(invnr_pages)
+
+            section_tally = PageTally()
             for invnr, inv_pages in sorted(invnr_pages.items()):
                 key = str(invnr)
                 if key in done:
-                    skipped += len(inv_pages)
+                    # Recorded complete by an earlier run: its pages are on
+                    # disk, so they count as already present, not as new.
+                    section_tally.skipped += len(inv_pages)
+                    summary.pages.skipped += len(inv_pages)
                     continue
 
                 inv_text = invnr_texts.get(invnr, "")
@@ -561,32 +577,24 @@ def main(
 
                 _write_metadata(dest_dir, kantoor, micode, invnr, inv_text, len(inv_pages))
 
-                inv_downloaded = inv_skipped = inv_missing = 0
+                tally = PageTally()
                 for p in sorted(inv_pages, key=lambda x: x["page"]):
                     url = _fullsize_url(p["thumb_url"])
                     dest = dest_dir / f"{p['page']:04d}.jpg"
-                    status = _download_file(session, url, dest)
-                    if status == "downloaded":
-                        inv_downloaded += 1
-                    elif status == "exists":
-                        inv_skipped += 1
-                    else:
-                        inv_missing += 1
+                    tally.record(_download_file(session, url, dest), dest)
                     time.sleep(0.15)
 
-                print(
-                    f"{len(inv_pages)} pages "
-                    f"({inv_downloaded} new, {inv_skipped} existing, {inv_missing} missing)"
-                )
+                print(tally.describe(len(inv_pages)))
 
                 with open(done_file, "a") as f:
                     f.write(key + "\n")
 
-                downloaded += inv_downloaded
-                skipped += inv_skipped
-                missing += inv_missing
+                # Fold in per register, not per section, so a run that dies
+                # midway still reports everything it downloaded.
+                section_tally += tally
+                summary.pages += tally
 
-            print(f"    Section totals: {downloaded} new, {skipped} existing, {missing} missing")
+            print(f"    Section totals: {section_tally.describe()}")
 
     if list_invnrs:
         print()
@@ -600,7 +608,8 @@ def main(
             print(f"Wrote {len(csv_rows)} rows to {csv_out}\n")
         return
 
-    print("\nDone (Utrechts Archief).")
+    summary.report()
+    return summary
 
 
 if __name__ == "__main__":

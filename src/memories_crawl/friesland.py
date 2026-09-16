@@ -39,6 +39,7 @@ from pathlib import Path
 import requests
 
 from memories_crawl import paths
+from memories_crawl.summary import PageTally, RunSummary
 
 API_BASE = "https://webservices.memorix.nl/genealogy"
 API_KEY = "aa030ec4-12d0-4dc0-afaf-b65fd6128b39"
@@ -243,7 +244,7 @@ def main(
     list_invnrs: bool = False,
     csv_out: str | None = None,
     out_dir: Path | None = None,
-) -> None:
+) -> RunSummary | None:
     if out_dir is not None:
         paths.set_out_dir(out_dir)
     output_dir = paths.archive_dir(ARCHIVE)
@@ -264,6 +265,9 @@ def main(
     if list_invnrs:
         _list_registers(registers, csv_out=csv_out)
         return
+
+    summary = RunSummary(ARCHIVE, "Friesland", unit_name="kantoren", record_name="persons")
+    kantoren_seen: set[str] = set()
 
     done = _load_done()
     progress_csv = _progress_csv()
@@ -312,6 +316,15 @@ def main(
             # Index deeds by id for person→deed join.
             deed_by_id: dict[str, dict] = {d.get("id", ""): d for d in deeds}
 
+            # Deeds embed their assets, so the register's scan count is known
+            # before a single image is fetched.
+            n_assets = sum(len(d.get("asset") or []) for d in deeds)
+            print(f"      {len(persons)} persons, {n_assets} scans …", flush=True)
+            kantoren_seen.add(kantoor)
+            summary.units = len(kantoren_seen)
+            summary.registers += 1
+
+            register_tally = PageTally()
             n_persons = 0
             for person in persons:
                 deed_id = person.get("deed_id") or ""
@@ -329,7 +342,7 @@ def main(
 
                 # Download scan pages from the deed's embedded assets.
                 assets = deed.get("asset") or []
-                n_done = 0
+                tally = PageTally()
                 for asset_idx, asset in enumerate(assets, start=1):
                     url = asset.get("download") or ""
                     if not url:
@@ -338,12 +351,15 @@ def main(
                     url_path = url.split("?")[0]
                     ext = Path(url_path).suffix or ".jp2"
                     dest = dest_dir / f"{asset_idx:04d}{ext}"
-                    status = _download_file(session, url, dest)
-                    if status in ("downloaded", "exists"):
-                        n_done += 1
+                    tally.record(_download_file(session, url, dest), dest)
 
+                n_done = tally.downloaded + tally.skipped
                 _write_person_metadata(dest_dir, person, deed, reg, n_done)
                 n_persons += 1
+                # Fold in per person, not per register, so a run that dies
+                # midway still reports everything it downloaded.
+                register_tally += tally
+                summary.pages += tally
 
             writer.writerow(
                 {
@@ -355,10 +371,12 @@ def main(
                 }
             )
             progress.flush()
-            print(f"      {n_persons} persons", flush=True)
+            summary.records += n_persons
+            print(f"      ✓ {n_persons} persons, {register_tally.describe()}", flush=True)
             time.sleep(REQUEST_SLEEP)
 
-    print("Friesland pipeline finished.")
+    summary.report()
+    return summary
 
 
 if __name__ == "__main__":
