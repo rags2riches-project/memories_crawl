@@ -38,6 +38,109 @@ an upgrade never silently repeats a token harvest.
 Every pipeline's `main()` takes `out_dir: Path | None = None` and calls
 `paths.set_out_dir(out_dir)` when it is given; the CLI sets it once up front.
 
+## Concurrent image downloads
+
+Image fetches — and only image fetches — go through the shared thread pool in
+`src/memories_crawl/download.py`. Every pipeline's `main()` takes
+`workers: int = download.DEFAULT_WORKERS` (4), which the CLI fills from
+`--workers`; `--workers 1` restores the strictly sequential pre-0.3 path (same
+thread as the caller, jobs walked in order).
+
+A pipeline builds one `download.Downloader(_download_file, workers=workers,
+rate=DOWNLOAD_RATE, session_factory=_session)` per run, then hands each batch of
+`download.Job(url, dest, key=None)` to `downloader.run(jobs, on_result=…)` and
+splits the returned `Counter` with `download.tally(counts)` →
+`(downloaded, existing, missing)`. Rules:
+
+* **Never share a `requests.Session` across threads** – it is not thread-safe.
+  The pool builds one per worker thread from `session_factory`, so a pipeline
+  needs a module-level `_session()` that sets its headers (User-Agent, Referer).
+* `rate` is the requests/second ceiling shared by all workers, replacing the old
+  fixed `time.sleep` between images. Pass the pace that sleep produced
+  (`DOWNLOAD_RATE = 1 / 0.15` for the MAIS pipelines, `10.0` for Limburg,
+  nothing for the Memorix/NA pipelines, which never slept between images).
+* A 429 pauses **all** workers (`RateLimiter.penalize`, honouring `Retry-After`),
+  because per-worker backoff would just let the other workers keep hammering.
+* Counters and the `on_result` callback run under the pool's lock, so pipeline
+  bookkeeping need not be thread-safe itself.
+* Keep discovery, the Playwright token harvest and metadata writes sequential.
+
+## Run reporting (issue #19)
+
+`src/memories_crawl/summary.py` holds the counting. Every pipeline's `main()`
+returns a `RunSummary | None` (`None` only for a `--list-invnrs` pass, which
+downloads nothing).
+
+* `PageTally` folds one download outcome at a time via
+  `tally.record(status, dest)`, where `status` is what `_download_file`
+  returns (`downloaded` / `exists` / `missing` / `failed`). It is a plain value
+  object with `+=`, so a concurrent download loop (issue #26) can keep a tally
+  per thread and merge at the join — never mutate module-level counters.
+  Bytes come from `dest.stat().st_size` of pages this run actually fetched;
+  never multiply a page count by an assumed average (36× spread between
+  archives).
+* `tally.describe(n_pages)` renders the per-register progress line
+  (`38 pages (38 new, 0 existing, 0 missing, 21.7 MB)`).
+* `announce(pages, registers, where)` prints the up-front
+  `→ about to download N pages across M registers in …` line. Call it only
+  where the page list is genuinely known in advance — the MAIS pipelines know
+  it after the token harvest; Limburg counts its token caches first.
+* `RunSummary` carries `units` (kantoren, gemeenten or archive codes;
+  `unit_name=None` for the Nationaal Archief, which has no such layer),
+  `registers`, optional `records` (deeds/persons, where the archive indexes
+  them), and the `pages` tally. `summary.report()` prints the end-of-run block;
+  each pipeline calls it at the point where it used to print `Done (X).`.
+* Fold each register's tally into the summary **as that register finishes**,
+  not once per kantoor, so a crash midway keeps the partial totals.
+* `RunSummary` registers itself with the collector `cli.py` installs around
+  each pipeline call (`summary.collect()`), which is how the CLI can print a
+  partial summary for a pipeline that raised and still include it in the
+  `all` grand total (`summary.grand_total`). The CLI prints a summary only if
+  the pipeline did not already report it, and prints none at all for
+  `--list-invnrs`.
+
+## Archive-level inventory listing (issue #25)
+
+The four API-backed pipelines have to know which registers exist before they
+can do anything else, and that enumeration used to be re-paid on every
+invocation, including runs that download nothing. `src/memories_crawl/regcache.py`
+now stores the listing under `<out-dir>/.cache/{archive}/` for **30 days**:
+
+| Archive | Cache file | What it holds |
+|---|---|---|
+| `bhic` | `registers.json` | the raw `/register` documents (1,896) |
+| `friesland` | `registers.json` | the raw `/register` documents (1,107) |
+| `drentsarchief` | `registers.json` | the raw `/register` documents (557) |
+| `nationaalarchief` | `inventory.json` | the invnrs parsed out of the EAD XML |
+
+Rules the cache follows, because a listing that silently loses registers is
+much worse than a slow one:
+
+* keyed by the query that produced it (`REGISTER_FILTER` / `EAD_XML_URL`), so a
+  changed filter re-collects instead of serving the old answer;
+* anything unreadable, unrecognised, expired, future-dated or **empty** counts
+  as a miss and is re-collected — never read as "this archive is empty";
+* an empty result is never written, so a transient API hiccup cannot pin an
+  empty inventory in place for a month;
+* the Nationaal Archief fallback invnr list is never cached, for the same
+  reason;
+* Drenthe stores the *raw* register documents and applies `_is_tafel()` after
+  loading, so the Tafel V-bis rule is never baked into a cache file.
+
+`--refresh-cache` forces re-collection for these four pipelines. It is not
+passed to the Playwright ones, which have their own inventory/token caches.
+
+**Server-side `--invnr` is preferred over the cache.** Memorix indexes the
+inventarisnummer as the exact-match field `search_s_inventarisnummer`, so a
+`--invnr` run on `bhic`, `friesland` or `drentsarchief` issues one targeted
+request (`… AND search_s_inventarisnummer:("84" OR "1903-1906")`) instead of
+walking the listing, and neither reads nor writes the cache. Verified against
+all three tenants to return exactly what the old client-side filter kept,
+including non-numeric numbers (`1903-1906`, `15.2`, `6004a`) and with no
+prefix bleed (`1` does not match `12`). The Nationaal Archief has no such
+query — its inventory is one EAD XML download — so it keeps filtering client
+side over the cached list.
+
 ## File map
 
 | File | Purpose |
@@ -45,6 +148,12 @@ Every pipeline's `main()` takes `out_dir: Path | None = None` and calls
 | `src/memories_crawl/cli.py` | CLI dispatcher |
 | `src/memories_crawl/paths.py` | Output root, per-archive scan dirs and cache paths |
 | `src/memories_crawl/listing.py` | `--list-invnrs` count vocabulary: the `?` unknown marker, `has_scans()`, the "nothing to download" suffix |
+| `src/memories_crawl/download.py` | Bounded thread pool, shared rate limiter and global 429 backoff for image fetches |
+
+| `src/memories_crawl/summary.py` | Download counters, per-archive summary, cross-archive total |
+
+| `src/memories_crawl/regcache.py` | TTL cache for the archive-level inventory listing |
+| `src/memories_crawl/filters.py` | Case-insensitive name/code matching for `--kantoor` |
 | `src/memories_crawl/nationaalarchief.py` | Zuid-Holland: scrape viewer pages, download via UUID |
 | `src/memories_crawl/drentsarchief.py` | Drenthe: Memorix REST API, deed→asset chain |
 | `src/memories_crawl/bhic.py` | Noord-Brabant (BHIC): Memorix REST API, register→asset chain |
@@ -72,7 +181,7 @@ exactly this reason.
 
 | Archive | column(s) | free source | `--count-scans` cost |
 |---|---|---|---|
-| friesland | `n_persons`, `n_with_scans` | `register["asset"]` non-empty ⇒ digitized (verified on 14 registers, 0 disagreements) | 1 `/person` count + a `/deed` walk per register |
+| friesland | `n_persons`, `n_with_scans` | `register["asset"]` non-empty ⇒ digitized (verified on 14 registers, 0 disagreements) | a `/person` walk joined to a `/deed` walk per register |
 | bhic | `n_scans` | `register["asset"]` non-empty | 1 `/asset?rows=1` per register (`pagination.total`) |
 | drentsarchief | `n_scans` | `register["asset"]` non-empty (553 of 557) | 1 `/asset?rows=1` per register — `/asset` is queryable by `register_id` even though assets hang off the deeds |
 | nationaalarchief | `kantoor`, `n_scans` | `did/dao` METS link in the EAD XML: 3,237 of 3,958 items digitized (spot-checked, no-`dao` ⇒ 0 scans) | 1 viewer page fetch per invnr |
@@ -92,6 +201,50 @@ visible in the log rather than inferred from the filesystem, e.g.
 `Lemmer 12038: 79 persons, 0 with scans — nothing to download`. The suffix keys
 off what the register *holds*, not off what the current run fetched: a fully
 resumed register downloads nothing and must not be labelled empty.
+
+The Nationaal Archief entry cache uses `EAD_XML_URL + "#entries-v1"`, so legacy
+integer-list caches are re-collected. Availability filters apply after inventory
+and kantoor selection. Friesland records `partial` when `--only-digitized` skips
+person sidecars within a register, allowing a later full run to finish them.
+
+## Filters: `--invnr` and `--kantoor`
+
+`--invnr` (repeatable) narrows the download to specific inventarisnummers.
+`--kantoor` (repeatable) narrows the *search* to specific kantoren, and is
+applied **before** any discovery or token-harvest work — an inventarisnummer
+belongs to exactly one kantoor, so without it a single-register fetch walks all
+21 Gelderland kantoren to find one (issue #24).
+
+`src/memories_crawl/filters.py` does the matching: case-insensitive, whitespace
+trimmed, leading zeros ignored for numeric identifiers (`--kantoor 22` finds
+Gelderland's `0022`). A value matches when it equals *any* label the pipeline
+offers for that kantoor — the name from the `kantoor` column of `--list-invnrs`
+plus, where the archive has one, the archief-code (gelderland `0026`, bhic
+`036.03.04`, limburg `07.D03`), the micode (utrechtsarchief `337-2`), the minr
+(overijssel, zeeland, noordholland) or the archiefnummer (drentsarchief).
+`nationaalarchief` has no kantoor subdivision; the CLI reports the flag as
+ignored rather than pretending to apply it.
+
+Every pipeline's `main()` takes `kantoren: set[str] | None = None` (the raw
+user strings — pass them to `filters.normalize()` once at the top) except
+`nationaalarchief`.
+
+**Cache-driven skipping.** Where a cache can *prove* a kantoor holds none of the
+requested invnrs, the kantoor is skipped before any network work even without
+`--kantoor`: gelderland and limburg consult `inventory_{code}.json`, overijssel
+and zeeland the kantoor's *complete* token cache (a partial harvest is not
+evidence). A missing cache must always fall through to normal discovery —
+absence of evidence is never evidence of absence.
+
+**Warnings.** A filter that matches nothing across the whole archive prints a
+`WARNING` line, so `--invnr 99999` is distinguishable from a successful no-op.
+A kantoor already recorded in `done.txt` counts as matched.
+
+**`done.txt` interaction.** The markers are keyed by kantoor, which is coarser
+than `--invnr` but exactly as coarse as `--kantoor`: a `--kantoor` run may
+record the kantoren it fully processed, a run with `--invnr` set may not.
+`tests/test_invnr_filter.py` (issue #22) and `tests/test_kantoor_filter.py`
+(issue #24) are the regression tests for that rule.
 
 ## Exclusion rule
 
@@ -160,6 +313,11 @@ Each pipeline was live-tested against the real APIs and servers.
 
 Scans are in a `<script data-drupal-selector="drupal-settings-json">` JSON blob. Parse `settings["viewer"]["response"]["scans"]`. Each scan has `{"id": UUID, "label": "NL-HaNA_...", "default": {"url": "https://service.archief.nl/api/file/v1/default/{UUID}"}}`. Download via `default.url`.
 
+The invnrs parsed out of the EAD XML are cached in
+`<out-dir>/.cache/nationaalarchief/inventory.json`, so the XML is downloaded at
+most once a month. `_fallback_invnrs()` is deliberately never cached — see
+*Archive-level inventory listing* above.
+
 ### Drents Archief API
 
 ```
@@ -183,6 +341,11 @@ so `--invnr N` may select several registers.
 single request. Do **not** re-introduce the old person-index walk
 (`/person?q=*:*` over ~1,064 pages) — see issue #28.
 
+The listing is cached in `<out-dir>/.cache/drentsarchief/registers.json`, and
+`--invnr` is pushed into the query as `search_s_inventarisnummer` — see
+*Archive-level inventory listing* above. The win is small here (the walk was
+already one request), but it keeps the three Memorix pipelines identical.
+
 ### BHIC (Noord-Brabant) API
 
 Same Memorix backend, **different tenant key**, and scans live at the **register**
@@ -201,6 +364,11 @@ Full image:    asset[].download  (https://images.memorix.nl/bhic/download/fullsi
 1,896 registers total. Code prefixes are `036.03.01..19` (Memories van successie,
 kantoor X) plus `021.13` (Memories van successie Brabant). Tafel V-bis is not
 indexed at BHIC, but `_is_tafel()` filters defensively just in case.
+
+The `rows=100` walk is 19 requests, ~5.2 s of which most is the deliberate
+`REQUEST_SLEEP`. It is cached in `<out-dir>/.cache/bhic/registers.json`, and an
+`--invnr` run skips it entirely via `search_s_inventarisnummer` (~18 ms) — see
+*Archive-level inventory listing* above.
 
 ### Friesland (Tresoar / AlleFriezen) – Memorix REST API
 
@@ -247,6 +415,11 @@ Kantoor is extracted from the register `naam` field (e.g. "Sneek" from
 
 **Resume**: `<out-dir>/.cache/friesland/friesland_progress.csv` tracks completed registers. Existing
 per-person directories (with `metadata.json`) are skipped on reruns.
+
+**Inventory cache**: the 12-page register walk (~3.1 s) is cached in
+`<out-dir>/.cache/friesland/registers.json`, and an `--invnr` run replaces it
+with one `search_s_inventarisnummer` request (~23 ms) — see *Archive-level
+inventory listing* above.
 
 ### Limburg (RHCL) – archieven.nl MAIS
 
@@ -326,6 +499,8 @@ Partial token caches allow resuming interrupted harvest runs.
 so a filtered run neither reads nor writes it: ``--invnr`` runs are stateless with
 respect to unit completion, and per-file existence checks keep repeat runs cheap.
 A filter that matches nothing anywhere prints a warning instead of exiting silently.
+``--kantoor`` is exactly as coarse as the marker, so a ``--kantoor``-only run
+still records the kantoren it finished; adding ``--invnr`` suppresses that again.
 
 ### Zeeland (Zeeuws Archief) – MAIS token extraction
 
@@ -383,6 +558,8 @@ Partial token caches allow resuming interrupted harvest runs.
 so a filtered run neither reads nor writes it: ``--invnr`` runs are stateless with
 respect to unit completion, and per-file existence checks keep repeat runs cheap.
 A filter that matches nothing anywhere prints a warning instead of exiting silently.
+``--kantoor`` is exactly as coarse as the marker, so a ``--kantoor``-only run
+still records the kantoren it finished; adding ``--invnr`` suppresses that again.
 The per-kantoor token cache is suppressed the same way, since it claims to hold
 every page in the kantoor; a warm cache is still narrowed to the requested invnrs.
 
@@ -456,6 +633,8 @@ here.
 so a filtered run neither reads nor writes it: ``--invnr`` runs are stateless with
 respect to unit completion, and per-file existence checks keep repeat runs cheap.
 A filter that matches nothing anywhere prints a warning instead of exiting silently.
+``--kantoor`` is exactly as coarse as the marker, so a ``--kantoor``-only run
+still records the kantoren it finished; adding ``--invnr`` suppresses that again.
 The per-kantoor code token cache is suppressed the same way, since it claims to hold
 every page in the kantoor code; a warm cache is still narrowed to the requested invnrs.
 

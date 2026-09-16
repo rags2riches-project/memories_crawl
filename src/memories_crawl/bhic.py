@@ -41,14 +41,20 @@ from pathlib import Path
 
 import requests
 
-from memories_crawl import listing, paths
+from memories_crawl import download, filters, listing, paths, regcache
+from memories_crawl.summary import PageTally, RunSummary
 
 API_BASE = "https://webservices.memorix.nl/genealogy"
 API_KEY = "24c66d08-da4a-4d60-917f-5942681dcaa1"
 REGISTER_FILTER = 'search_s_type_title:"memorie van successie"'
+#: Memorix indexes the inventarisnummer as an exact-match string field, so the
+#: ``--invnr`` filter can be pushed into the query instead of walking the whole
+#: listing and discarding 1,890 of 1,896 registers (issue #25).
+INVNR_FIELD = "search_s_inventarisnummer"
 PAGE_SIZE = 100
 ARCHIVE = "bhic"
 PROGRESS_CSV_NAME = "bhic_progress.csv"
+REGISTER_CACHE_NAME = "registers.json"
 USER_AGENT = "memories-crawl/1.0"
 
 ARCHIVE_NAME = "Brabants Historisch Informatie Centrum"
@@ -103,33 +109,45 @@ def _paginate(session: requests.Session, path: str, fq: str, key: str) -> list[d
     return items
 
 
-def _count(session: requests.Session, path: str, fq: str) -> int:
-    """Exact number of hits for a filter, in a single request.
+def _escape_fq(value: str) -> str:
+    """Quote-escape a user-supplied value for use inside an ``fq`` phrase."""
+    return value.replace("\\", "\\\\").replace('"', '\\"')
 
-    ``rows=1`` still reports ``pagination.total``, so a count costs one small
-    response instead of paging the whole result set.
+
+def _register_fq(invnrs: set[str]) -> str:
+    """Return the register filter query narrowed to ``invnrs`` server-side.
+
+    Verified against the live API to select exactly the registers the old
+    client-side filter kept, including non-numeric numbers such as
+    ``1903-1906``, and never a numeric prefix of another (``1`` does not match
+    ``12``).
     """
-    data = _get_json(session, path, {"q": "*:*", "rows": 1, "page": 1, "fq": fq})
-    pagination = (data.get("metadata") or {}).get("pagination") or {}
-    return int(pagination.get("total") or 0)
+    values = " OR ".join(f'"{_escape_fq(v)}"' for v in sorted(invnrs))
+    return f"{REGISTER_FILTER} AND {INVNR_FIELD}:({values})"
 
 
-def _register_is_digitized(register: dict) -> bool:
-    """Has BHIC digitized this register?
+def _load_registers(
+    session: requests.Session,
+    invnrs: set[str] | None = None,
+    refresh_cache: bool = False,
+) -> list[dict]:
+    """Return the MvS registers, narrowed to ``invnrs`` when one is given.
 
-    Register search results carry a truncated ``asset`` sample -- one entry for
-    a register holding hundreds of scans -- so it answers "any scans at all?"
-    for free, but never "how many". That needs ``--count-scans``.
+    A ``--invnr`` run asks Memorix for just those registers, which is a single
+    request rather than the nineteen-page walk.  An unfiltered run pays for the
+    walk once and caches it (see :mod:`memories_crawl.regcache`).
     """
-    return bool(register.get("asset"))
-
-
-def _count_scans(session: requests.Session, register: dict) -> int | None:
-    """Exact number of scans in one register (one ``/asset`` count request)."""
-    reg_id = register.get("id") or ""
-    if not reg_id:
-        return None
-    return _count(session, "/asset", f"register_id:{reg_id}")
+    if invnrs is not None:
+        if not invnrs:
+            return []
+        return _paginate(session, "/register", _register_fq(invnrs), "register")
+    return regcache.load_or_collect(
+        ARCHIVE,
+        REGISTER_CACHE_NAME,
+        lambda: _paginate(session, "/register", REGISTER_FILTER, "register"),
+        key=REGISTER_FILTER,
+        refresh=refresh_cache,
+    )
 
 
 def _is_tafel(register: dict) -> bool:
@@ -278,9 +296,6 @@ def _load_done() -> set[str]:
     return done
 
 
-LIST_FIELDS = ["invnr", "gemeente", "register_name", "n_scans"]
-
-
 def _list_registers(
     registers: list[dict],
     csv_out: str | None = None,
@@ -328,6 +343,41 @@ def _list_registers(
         print(f"Wrote {len(rows)} rows to {csv_out}\n")
 
 
+def _count(session: requests.Session, path: str, fq: str) -> int | None:
+    """Exact number of hits for a filter, in a single request.
+
+    ``rows=1`` still reports ``pagination.total``, so a count costs one small
+    response instead of paging the whole result set.
+    """
+    try:
+        data = _get_json(session, path, {"q": "*:*", "rows": 1, "page": 1, "fq": fq})
+        total = ((data.get("metadata") or {}).get("pagination") or {}).get("total")
+        return int(total) if total is not None and int(total) >= 0 else None
+    except (requests.RequestException, ValueError, TypeError):
+        return None
+
+
+def _register_is_digitized(register: dict) -> bool:
+    """Has BHIC digitized this register?
+
+    Register search results carry a truncated ``asset`` sample -- one entry for
+    a register holding hundreds of scans -- so it answers "any scans at all?"
+    for free, but never "how many". That needs ``--count-scans``.
+    """
+    return bool(register.get("asset"))
+
+
+def _count_scans(session: requests.Session, register: dict) -> int | None:
+    """Exact number of scans in one register (one ``/asset`` count request)."""
+    reg_id = register.get("id") or ""
+    if not reg_id:
+        return None
+    return _count(session, "/asset", f"register_id:{reg_id}")
+
+
+LIST_FIELDS = ["invnr", "gemeente", "register_name", "n_scans"]
+
+
 def main(
     invnrs: set[str] | None = None,
     list_invnrs: bool = False,
@@ -335,133 +385,179 @@ def main(
     out_dir: Path | None = None,
     only_digitized: bool = False,
     count_scans: bool = False,
-) -> None:
+    workers: int = download.DEFAULT_WORKERS,
+    kantoren: set[str] | None = None,
+    refresh_cache: bool = False,
+) -> RunSummary | None:
+    kantoor_filter = filters.normalize(kantoren)
+
     if out_dir is not None:
         paths.set_out_dir(out_dir)
     paths.archive_dir(ARCHIVE).mkdir(parents=True, exist_ok=True)
 
     session = _session()
-
-    print("Collecting BHIC Memorie van Successie registers …")
-    registers = _paginate(session, "/register", REGISTER_FILTER, "register")
-    print(f"Found {len(registers)} registers.")
-
-    if invnrs is not None:
-        registers = [
-            r for r in registers if (r.get("metadata") or {}).get("inventarisnummer", "") in invnrs
-        ]
-        print(f"Filtered to {len(registers)} registers matching --invnr.")
-
-    if list_invnrs:
-        counts: dict[str, int | None] | None = None
-        if count_scans:
-            print(f"Counting scans for {len(registers)} registers …")
-            counts = {reg.get("id") or "": _count_scans(session, reg) for reg in registers}
-        _list_registers(registers, csv_out=csv_out, counts=counts, only_digitized=only_digitized)
-        return
-
-    if only_digitized:
-        # The register listing already carries the digitized flag, so dropping
-        # the empty registers here is free and saves each of them a deeds,
-        # persons and asset round trip.
-        kept = [r for r in registers if _register_is_digitized(r)]
-        print(f"--only-digitized: {len(kept)} of {len(registers)} registers have scans.")
-        registers = kept
-
-    done = _load_done()
-    progress_csv = _progress_csv()
-    write_header = not progress_csv.exists() or progress_csv.stat().st_size == 0
-    with open(progress_csv, "a", newline="", encoding="utf-8") as progress:
-        writer = csv.DictWriter(
-            progress, fieldnames=["register_id", "gemeente", "invnr", "status", "n_scans"]
-        )
-        if write_header:
-            writer.writeheader()
-            progress.flush()
-
-        for idx, reg in enumerate(registers, start=1):
-            reg_id = reg.get("id") or ""
-            md = reg.get("metadata") or {}
-            gemeente = md.get("gemeente") or "?"
-            invnr = md.get("inventarisnummer") or "?"
-
-            if not reg_id or reg_id in done:
-                continue
-            if _is_tafel(reg):
-                writer.writerow(
-                    {
-                        "register_id": reg_id,
-                        "gemeente": gemeente,
-                        "invnr": invnr,
-                        "status": "skipped_tafel",
-                        "n_scans": 0,
-                    }
+    downloader = download.Downloader(_download_file, workers=workers, session_factory=_session)
+    try:
+        print("Collecting BHIC Memorie van Successie registers …")
+        registers = _load_registers(session, invnrs=invnrs, refresh_cache=refresh_cache)
+        if kantoor_filter is not None:
+            registers = [
+                r
+                for r in registers
+                if filters.matches(
+                    kantoor_filter,
+                    (r.get("metadata") or {}).get("gemeente") or "",
+                    (r.get("metadata") or {}).get("code") or "",
                 )
-                progress.flush()
-                continue
-
-            dest_dir = _register_dir(reg)
-            print(f"[{idx}/{len(registers)}] {gemeente} deel {invnr} → {dest_dir} …", flush=True)
-
-            _write_register_metadata(dest_dir, reg)
-
-            # Pull all deeds + persons for the genealogical sidecar.
-            try:
-                deeds = _paginate(session, "/deed", f"register_id:{reg_id}", "deed")
-                persons = _paginate(session, "/person", f"register_id:{reg_id}", "person")
-                _write_deeds_sidecar(dest_dir, deeds, persons)
-            except Exception as exc:
-                print(f"      WARN: deeds/persons fetch failed: {exc}", flush=True)
-
-            # Page through assets and download each scan.
-            try:
-                assets = _paginate(session, "/asset", f"register_id:{reg_id}", "asset")
-            except Exception as exc:
-                print(f"      ERROR: asset listing failed: {exc}", flush=True)
-                writer.writerow(
-                    {
-                        "register_id": reg_id,
-                        "gemeente": gemeente,
-                        "invnr": invnr,
-                        "status": "asset_list_failed",
-                        "n_scans": 0,
-                    }
-                )
-                progress.flush()
-                continue
-
-            n_done = 0
-            for asset in assets:
-                # Prefer the explicit asset-search "download" URL; fall back to
-                # building one from the file_id if missing.
-                url = asset.get("download") or ""
-                file_id = asset.get("file_id") or ""
-                if not url and file_id:
-                    url = f"https://images.memorix.nl/bhic/download/fullsize/{file_id}.jpg"
-                if not url:
-                    continue
-                dest = dest_dir / _asset_filename(asset)
-                status = _download_file(session, url, dest)
-                if status in ("downloaded", "exists"):
-                    n_done += 1
-
-            writer.writerow(
-                {
-                    "register_id": reg_id,
-                    "gemeente": gemeente,
-                    "invnr": invnr,
-                    "status": "done",
-                    "n_scans": n_done,
-                }
-            )
-            progress.flush()
+            ]
+        if invnrs is not None or kantoor_filter is not None:
             print(
-                f"      ✓ {gemeente} {invnr}: {n_done} scans{listing.summary_suffix(n_done)}",
-                flush=True,
+                f"Filtered to {len(registers)} registers matching "
+                f"{filters.describe(invnrs, kantoren)}."
             )
-            time.sleep(REQUEST_SLEEP)
+            if not registers:
+                print(
+                    f"\nWARNING: {filters.describe(invnrs, kantoren)} matched no "
+                    "register in the BHIC collection."
+                )
+        else:
+            print(f"Found {len(registers)} registers.")
 
-    print("BHIC pipeline finished.")
+        if list_invnrs:
+            counts: dict[str, int | None] | None = None
+            if count_scans:
+                print(f"Counting scans for {len(registers)} registers …")
+                counts = {reg.get("id") or "": _count_scans(session, reg) for reg in registers}
+            _list_registers(
+                registers, csv_out=csv_out, counts=counts, only_digitized=only_digitized
+            )
+            return
+
+        if only_digitized:
+            # The register listing already carries the digitized flag, so dropping
+            # the empty registers here is free and saves each of them a deeds,
+            # persons and asset round trip.
+            kept = [r for r in registers if _register_is_digitized(r)]
+            print(f"--only-digitized: {len(kept)} of {len(registers)} registers have scans.")
+            registers = kept
+
+        # Registers are grouped by gemeente here; the archive has no kantoor layer.
+        summary = RunSummary(ARCHIVE, "Noord-Brabant (BHIC)", unit_name="gemeenten")
+        gemeenten_seen: set[str] = set()
+
+        done = _load_done()
+        progress_csv = _progress_csv()
+        write_header = not progress_csv.exists() or progress_csv.stat().st_size == 0
+        with open(progress_csv, "a", newline="", encoding="utf-8") as progress:
+            writer = csv.DictWriter(
+                progress, fieldnames=["register_id", "gemeente", "invnr", "status", "n_scans"]
+            )
+            if write_header:
+                writer.writeheader()
+                progress.flush()
+
+            for idx, reg in enumerate(registers, start=1):
+                reg_id = reg.get("id") or ""
+                md = reg.get("metadata") or {}
+                gemeente = md.get("gemeente") or "?"
+                invnr = md.get("inventarisnummer") or "?"
+
+                if not reg_id or reg_id in done:
+                    continue
+                if _is_tafel(reg):
+                    writer.writerow(
+                        {
+                            "register_id": reg_id,
+                            "gemeente": gemeente,
+                            "invnr": invnr,
+                            "status": "skipped_tafel",
+                            "n_scans": 0,
+                        }
+                    )
+                    progress.flush()
+                    continue
+
+                dest_dir = _register_dir(reg)
+                print(
+                    f"[{idx}/{len(registers)}] {gemeente} deel {invnr} → {dest_dir} …", flush=True
+                )
+
+                _write_register_metadata(dest_dir, reg)
+
+                # Pull all deeds + persons for the genealogical sidecar.
+                deeds: list[dict] = []
+                try:
+                    deeds = _paginate(session, "/deed", f"register_id:{reg_id}", "deed")
+                    persons = _paginate(session, "/person", f"register_id:{reg_id}", "person")
+                    _write_deeds_sidecar(dest_dir, deeds, persons)
+                    summary.records += len(deeds)
+                except Exception as exc:
+                    print(f"      WARN: deeds/persons fetch failed: {exc}", flush=True)
+
+                # Page through assets and download each scan.
+                try:
+                    assets = _paginate(session, "/asset", f"register_id:{reg_id}", "asset")
+                except Exception as exc:
+                    print(f"      ERROR: asset listing failed: {exc}", flush=True)
+                    writer.writerow(
+                        {
+                            "register_id": reg_id,
+                            "gemeente": gemeente,
+                            "invnr": invnr,
+                            "status": "asset_list_failed",
+                            "n_scans": 0,
+                        }
+                    )
+                    progress.flush()
+                    continue
+
+                jobs: list[download.Job] = []
+                print(
+                    f"      {len(deeds)} memories, {len(assets)} scans"
+                    f"{listing.summary_suffix(len(assets))}",
+                    flush=True,
+                )
+
+                tally = PageTally()
+                for asset in assets:
+                    # Prefer the explicit asset-search "download" URL; fall back to
+                    # building one from the file_id if missing.
+                    url = asset.get("download") or ""
+                    file_id = asset.get("file_id") or ""
+                    if not url and file_id:
+                        url = f"https://images.memorix.nl/bhic/download/fullsize/{file_id}.jpg"
+                    if not url:
+                        continue
+                    jobs.append(download.Job(url, dest_dir / _asset_filename(asset)))
+
+                def record_page(job: download.Job, status: str) -> None:
+                    tally.record(status, job.dest)
+                    summary.pages.record(status, job.dest)
+
+                downloader.run(jobs, on_result=record_page)
+
+                n_done = tally.downloaded + tally.skipped
+                writer.writerow(
+                    {
+                        "register_id": reg_id,
+                        "gemeente": gemeente,
+                        "invnr": invnr,
+                        "status": "done",
+                        "n_scans": n_done,
+                    }
+                )
+                progress.flush()
+                print(f"      ✓ {tally.describe(len(assets))}", flush=True)
+
+                gemeenten_seen.add(gemeente)
+                summary.units = len(gemeenten_seen)
+                summary.registers += 1
+                time.sleep(REQUEST_SLEEP)
+
+        summary.report()
+        return summary
+    finally:
+        downloader.close()
 
 
 if __name__ == "__main__":

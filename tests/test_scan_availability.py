@@ -162,22 +162,26 @@ def test_only_digitized_keeps_an_unknown_count(mod, count_field, tmp_path) -> No
     assert [r[count_field] for r in rows] == [listing.UNKNOWN]
 
 
-def test_friesland_exact_counts_use_one_person_request_and_a_deed_walk(monkeypatch) -> None:
-    calls: list[str] = []
-    register = _memorix_register("14008", digitized=True)
+def test_friesland_exact_counts_join_persons_to_deeds(monkeypatch) -> None:
+    calls = []
 
-    def fake_get_json(session, path, params, retries=3):
+    def paginate(session, path, fq, key):
         calls.append(path)
-        return {"metadata": {"pagination": {"total": 79}}}
+        if path == "/deed":
+            return [
+                {"id": "d1", "asset": [{}]},
+                {"id": "d2", "asset": []},
+                {"id": "orphan", "asset": [{}]},
+            ]
+        return [
+            {"deed_id": "d1", "metadata": {"type_title": "Overledene"}},
+            {"deed_id": "d1", "metadata": {"type_title": "Overledene"}},
+            {"deed_id": "d1", "metadata": {"type_title": "Vermeld"}},
+            {"deed_id": "d2", "metadata": {}},
+        ]
 
-    def fake_paginate(session, path, fq, key):
-        calls.append(path)
-        return [{"asset": [{"download": "u"}]}, {"asset": []}, {"asset": [{"download": "u"}]}]
-
-    monkeypatch.setattr(friesland, "_get_json", fake_get_json)
-    monkeypatch.setattr(friesland, "_paginate", fake_paginate)
-
-    assert friesland._register_counts(None, register, count_scans=True) == (79, 2)
+    monkeypatch.setattr(friesland, "_paginate", paginate)
+    assert friesland._register_counts(None, {"id": "r"}, True) == (3, 2)
     assert calls == ["/person", "/deed"]
 
 
@@ -455,3 +459,36 @@ def test_cli_exposes_the_new_flags() -> None:
     )
     assert "--only-digitized" in result.stdout
     assert "--count-scans" in result.stdout
+
+
+@pytest.mark.parametrize(("mod", "cache_path"), MAIS)
+def test_count_scans_preserves_full_cache_when_invnr_selected(
+    mod, cache_path, mais_stub, monkeypatch, tmp_path
+):
+    path = cache_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    contents = json.dumps(_tokens(1, 3) + _tokens(2, 5))
+    path.write_text(contents)
+    calls = []
+
+    def harvest(*args, write_cache=True):
+        calls.append(write_cache)
+        assert [it["invnr"] for it in args[-1]] == [1]
+        return _tokens(1, 3) + _tokens(2, 5)
+
+    monkeypatch.setattr(mod, "_harvest_page_tokens", harvest)
+    out = tmp_path / "selected.csv"
+    mod.main(
+        invnrs={"1"}, list_invnrs=True, only_digitized=True, count_scans=True, csv_out=str(out)
+    )
+    assert calls == [False]
+    assert path.read_text() == contents
+    assert not paths.cache_file(mod.ARCHIVE, "done.txt").exists()
+    _, rows = _read_csv(out)
+    assert [(r["invnr"], r["pages"]) for r in rows] == [("1", "3")]
+
+
+def test_gelderland_zero_pages_do_not_imply_office_did_not_match(mais_stub, monkeypatch, capsys):
+    monkeypatch.setattr(gelderland, "_harvest_page_tokens", lambda *a, **kw: [])
+    gelderland.main(kantoren={"Borculo"}, list_invnrs=True, only_digitized=True, count_scans=True)
+    assert "WARNING" not in capsys.readouterr().out

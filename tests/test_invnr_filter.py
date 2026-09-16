@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import pytest
 
-from memories_crawl import gelderland, noordholland, paths, zeeland
+from memories_crawl import download, gelderland, noordholland, paths, zeeland
 
 # Two units; the first holds two inventarisnummers so that "the filter picked
 # one of several in this unit" is exercised.
@@ -67,7 +67,8 @@ def h(monkeypatch, tmp_path):
 
     for mod in (gelderland, noordholland, zeeland):
         monkeypatch.setattr(mod, "_download_file", fake_download)
-        monkeypatch.setattr(mod.time, "sleep", lambda *_: None)
+    # The pacing between image fetches now lives in the shared download pool.
+    monkeypatch.setattr(download.time, "sleep", lambda *_: None)
 
     def harvest(unit: str, items: list[dict] | None, write_cache: bool) -> list[dict]:
         harness.harvest_calls.append({"unit": unit, "write_cache": write_cache})
@@ -177,6 +178,29 @@ def test_filter_matching_nothing_warns(mod, h, capsys):
     assert "WARNING" in out
     assert "99999" in out
     assert h.downloads == []
+
+
+@pytest.mark.parametrize("mod", ALL)
+def test_kantoor_filter_alone_still_records_completion(mod, h, tmp_path):
+    """--kantoor is no finer than done.txt, so what it finished may be marked.
+
+    The unit keys double as the archives' kantoor identifiers (code for
+    gelderland, minr for zeeland and noordholland), so "A" selects unit A.
+    """
+    mod.main(kantoren={"A"})
+
+    done = _done_file(mod, tmp_path)
+    assert done.exists()
+    assert set(done.read_text().split()) == {"A"}
+
+
+@pytest.mark.parametrize("mod", ALL)
+def test_kantoor_plus_invnr_does_not_write_done_marker(mod, h, tmp_path):
+    """--invnr is finer than done.txt whether or not --kantoor is also set."""
+    mod.main(kantoren={"A"}, invnrs={"4"})
+
+    done = _done_file(mod, tmp_path)
+    assert not done.exists() or done.read_text().strip() == ""
 
 
 @pytest.mark.parametrize("mod", CACHED)
