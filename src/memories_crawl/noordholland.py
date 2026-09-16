@@ -535,11 +535,24 @@ def main(
     print(f"Harvesting page tokens for {len(sections)} period sections")
     print(f"{'=' * 60}")
 
+    # done.txt records whole period sections, which is only ever accurate for
+    # an unfiltered run: under --invnr we fetch a subset, so writing the marker
+    # would make every later run skip the rest of the section.
+    filtered = invnrs is not None
+
     done_file = OUTPUT_DIR / "done.txt"
     done: set[str] = set()
-    if done_file.exists():
+    if done_file.exists() and not filtered:
         done = set(done_file.read_text().splitlines())
 
+    def mark_done(key: str) -> None:
+        """Record a period section as fully downloaded (no-op under --invnr)."""
+        if filtered:
+            return
+        with open(done_file, "a") as f:
+            f.write(f"{key}\n")
+
+    matched_any = False
     grand_downloaded = grand_skipped = grand_missing = 0
 
     for section_idx, section in enumerate(sections):
@@ -561,8 +574,7 @@ def main(
 
         if not pages:
             print("  No pages found in this period")
-            with open(done_file, "a") as f:
-                f.write(f"{period_minr}\n")
+            mark_done(str(period_minr))
             continue
 
         # Group pages by invnr
@@ -579,6 +591,13 @@ def main(
         if invnrs is not None:
             invnr_pages = {invnr: ips for invnr, ips in invnr_pages.items() if str(invnr) in invnrs}
             invnr_texts = {invnr: invnr_texts[invnr] for invnr in invnr_pages}
+            if not invnr_pages:
+                # The filter emptied the section, not the archive -- do not
+                # record it as done, or later runs would skip it entirely.
+                print("  No matching inventarisnummers in this period.")
+                continue
+
+        matched_any = True
 
         # --list-invnrs: print and skip download for this section
         if list_invnrs:
@@ -637,8 +656,13 @@ def main(
         grand_skipped += skipped
         grand_missing += missing
 
-        with open(done_file, "a") as f:
-            f.write(f"{period_minr}\n")
+        mark_done(str(period_minr))
+
+    if filtered and not matched_any:
+        print(
+            f"\nWARNING: --invnr {', '.join(sorted(invnrs))} matched no "
+            f"inventarisnummer in any of the {len(sections)} period sections."
+        )
 
     if list_invnrs:
         print()

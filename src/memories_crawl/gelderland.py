@@ -381,11 +381,18 @@ def _discover_invnrs(kantoor: str, code: str) -> list[dict]:
 # ---------------------------------------------------------------------------
 
 
-def _harvest_page_tokens(kantoor: str, code: str, invnrs: list[dict]) -> list[dict]:
+def _harvest_page_tokens(
+    kantoor: str, code: str, invnrs: list[dict], write_cache: bool = True
+) -> list[dict]:
     """Navigate to each digitized invnr's inv2 page and harvest its thumbnails.
 
     Resumes from a partial cache if one exists, writing the partial every 25
     invnrs so a crash mid-kantoor doesn't lose work.
+
+    ``write_cache=False`` suppresses both cache writes.  The cache is keyed by
+    kantoor and claims to hold every page in it, so a run that harvested only
+    an ``--invnr`` subset must not write it -- a later full run would load the
+    subset as complete and silently skip the rest of the kantoor.
     """
     complete_path = _tokens_path(code)
     cached_complete = _load_json(complete_path)
@@ -410,7 +417,7 @@ def _harvest_page_tokens(kantoor: str, code: str, invnrs: list[dict]) -> list[di
 
     digitized = [it for it in invnrs if it.get("hasScan") and it["invnr"] not in completed_invnrs]
     if not digitized:
-        if pages:
+        if pages and write_cache:
             _save_json(complete_path, pages)
             _tokens_partial_path(code).unlink(missing_ok=True)
         return pages
@@ -459,14 +466,15 @@ def _harvest_page_tokens(kantoor: str, code: str, invnrs: list[dict]) -> list[di
             print(f"{new_pages} new pages (total {len(pages)})")
 
             batch_idx = idx + 1
-            if batch_idx % 25 == 0 or batch_idx == len(digitized):
+            if write_cache and (batch_idx % 25 == 0 or batch_idx == len(digitized)):
                 _save_json(_tokens_partial_path(code), pages)
 
         browser.close()
 
     print(f"    total pages: {len(pages)}")
-    _save_json(complete_path, pages)
-    _tokens_partial_path(code).unlink(missing_ok=True)
+    if write_cache:
+        _save_json(complete_path, pages)
+        _tokens_partial_path(code).unlink(missing_ok=True)
     return pages
 
 
@@ -565,11 +573,24 @@ def main(
             print(f"Wrote {len(csv_rows)} rows to {csv_out}\n")
         return
 
+    # done.txt records whole kantoren, which is only ever accurate for an
+    # unfiltered run: under --invnr we fetch a subset, so writing the marker
+    # would make every later run skip the rest of the kantoor.
+    filtered = invnrs is not None
+
     done_file = OUTPUT_DIR / "done.txt"
     done: set[str] = set()
-    if done_file.exists():
+    if done_file.exists() and not filtered:
         done = set(done_file.read_text().splitlines())
 
+    def mark_done(key: str) -> None:
+        """Record a kantoor as fully downloaded (no-op under --invnr)."""
+        if filtered:
+            return
+        with open(done_file, "a") as f:
+            f.write(f"{key}\n")
+
+    matched_any = False
     grand_downloaded = grand_skipped = grand_missing = 0
 
     for k_idx, (kantoor, code) in enumerate(KANTOREN.items()):
@@ -588,17 +609,26 @@ def main(
 
         digitized = [it for it in discovered if it.get("hasScan")]
         if not digitized:
-            print("  No digitized inventarisnummers, skipping.")
-            with open(done_file, "a") as f:
-                f.write(f"{code}\n")
+            # Distinguish "the archive has nothing" from "--invnr removed
+            # everything" -- only the former means the kantoor is done.
+            if filtered:
+                print("  No matching inventarisnummers in this kantoor.")
+            else:
+                print("  No digitized inventarisnummers, skipping.")
+                mark_done(code)
             continue
 
+        matched_any = True
+
         # Phase 2: harvest tokens
-        pages = _harvest_page_tokens(kantoor, code, discovered)
+        pages = _harvest_page_tokens(kantoor, code, discovered, write_cache=not filtered)
+        if filtered:
+            # A warm token cache holds the whole kantoor, so filtering the
+            # discovered invnrs is not enough to keep --invnr honest.
+            pages = [p for p in pages if str(p["invnr"]) in invnrs]
         if not pages:
             print("  No pages harvested, skipping.")
-            with open(done_file, "a") as f:
-                f.write(f"{code}\n")
+            mark_done(code)
             continue
 
         # Group pages by invnr
@@ -650,8 +680,13 @@ def main(
         grand_skipped += skipped
         grand_missing += missing
 
-        with open(done_file, "a") as f:
-            f.write(f"{code}\n")
+        mark_done(code)
+
+    if filtered and not matched_any:
+        print(
+            f"\nWARNING: --invnr {', '.join(sorted(invnrs))} matched no "
+            f"inventarisnummer in any of the {len(KANTOREN)} kantoren."
+        )
 
     print("\n===== COMPLETE =====")
     print(

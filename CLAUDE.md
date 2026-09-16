@@ -265,6 +265,11 @@ Note that the preserve URL uses `mivast=0` (not 236), same pattern as Limburg.
 **Resume**: ``scans/noordholland/done.txt`` tracks completed kantoor sections.
 Partial token caches allow resuming interrupted harvest runs.
 
+``done.txt`` is keyed by kantoor section, which is coarser than ``--invnr`` filters at,
+so a filtered run neither reads nor writes it: ``--invnr`` runs are stateless with
+respect to unit completion, and per-file existence checks keep repeat runs cheap.
+A filter that matches nothing anywhere prints a warning instead of exiting silently.
+
 ### Zeeland (Zeeuws Archief) – MAIS token extraction
 
 First-time setup: ``uv sync && playwright install chromium``
@@ -316,6 +321,13 @@ scan segments within one register.
 
 **Resume**: ``scans/zeeland/done.txt`` tracks completed kantoren.
 Partial token caches allow resuming interrupted harvest runs.
+
+``done.txt`` is keyed by kantoor, which is coarser than ``--invnr`` filters at,
+so a filtered run neither reads nor writes it: ``--invnr`` runs are stateless with
+respect to unit completion, and per-file existence checks keep repeat runs cheap.
+A filter that matches nothing anywhere prints a warning instead of exiting silently.
+The per-kantoor token cache is suppressed the same way, since it claims to hold
+every page in the kantoor; a warm cache is still narrowed to the requested invnrs.
 
 **Smoke test** (2026-05-11): Goes invnr 1 → 327 pages, invnr 2 → 373 pages.
 Downloads at ``format=large`` PNG (673×1024, ~300KB–950KB per page).
@@ -382,6 +394,13 @@ here.
   every 25 invnrs so a crash mid-harvest doesn't lose work
 
 **Resume**: ``scans/gelderland/done.txt`` tracks completed kantoor codes.
+
+``done.txt`` is keyed by kantoor code, which is coarser than ``--invnr`` filters at,
+so a filtered run neither reads nor writes it: ``--invnr`` runs are stateless with
+respect to unit completion, and per-file existence checks keep repeat runs cheap.
+A filter that matches nothing anywhere prints a warning instead of exiting silently.
+The per-kantoor code token cache is suppressed the same way, since it claims to hold
+every page in the kantoor code; a warm cache is still narrowed to the requested invnrs.
 
 **Smoke test** (2026-05-11): Borculo (code 0022) end-to-end – 49 digitized
 invnrs discovered, invnr 1 ("1 1818 eerste halfjaar") → 38 pages, full-size
