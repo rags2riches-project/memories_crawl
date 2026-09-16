@@ -24,6 +24,8 @@ from pathlib import Path
 
 import requests
 
+from memories_crawl import paths
+
 ACCESS_NUMBER = "3.06.05"
 EAD_XML_URL = "https://www.nationaalarchief.nl/onderzoeken/archief/3.06.05/download/xml"
 # Base URL pattern for inventory viewer pages
@@ -31,7 +33,7 @@ VIEWER_URL_TPL = (
     "https://www.nationaalarchief.nl/onderzoeken/archief/3.06.05/invnr/@{invnr}"
     "/file/NL-HaNA_3.06.05_{invnr}_0000"
 )
-OUTPUT_DIR = Path("scans/nationaalarchief")
+ARCHIVE = "nationaalarchief"
 USER_AGENT = "memories-crawl/1.0"
 
 ARCHIVE_NAME = "Nationaal Archief"
@@ -291,10 +293,17 @@ def _list_inventory(inv_numbers: list[int], csv_out: str | None = None) -> None:
 
 
 def main(
-    invnrs: set[str] | None = None, list_invnrs: bool = False, csv_out: str | None = None
+    invnrs: set[str] | None = None,
+    list_invnrs: bool = False,
+    csv_out: str | None = None,
+    out_dir: Path | None = None,
 ) -> None:
+    if out_dir is not None:
+        paths.set_out_dir(out_dir)
+    output_dir = paths.archive_dir(ARCHIVE)
+
     session = _session()
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    output_dir.mkdir(parents=True, exist_ok=True)
 
     print("Fetching inventory numbers from EAD XML …")
     inv_numbers = _fetch_inventory_numbers(session)
@@ -308,7 +317,9 @@ def main(
         _list_inventory(inv_numbers, csv_out=csv_out)
         return
 
-    done_file = Path("nationaalarchief_done.txt")
+    done_file = paths.cache_file(
+        ARCHIVE, "nationaalarchief_done.txt", legacy=Path("nationaalarchief_done.txt")
+    )
     done: set[str] = set()
     if done_file.exists():
         done = set(done_file.read_text().splitlines())
@@ -318,7 +329,7 @@ def main(
         if key in done:
             continue
 
-        dest_dir = OUTPUT_DIR / key
+        dest_dir = output_dir / key
         print(f"  invnr {invnr} …", end=" ", flush=True)
 
         url = VIEWER_URL_TPL.format(invnr=invnr)

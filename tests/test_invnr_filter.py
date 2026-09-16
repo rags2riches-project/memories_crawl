@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import pytest
 
-from memories_crawl import gelderland, noordholland, zeeland
+from memories_crawl import gelderland, noordholland, paths, zeeland
 
 # Two units; the first holds two inventarisnummers so that "the filter picked
 # one of several in this unit" is exercised.
@@ -56,6 +56,7 @@ class Harness:
 def h(monkeypatch, tmp_path):
     """Replace every network/Playwright call with in-memory fakes."""
     monkeypatch.chdir(tmp_path)
+    paths.set_out_dir(None)  # default ./scans, i.e. below tmp_path
     harness = Harness()
 
     def fake_download(session, url, dest):
@@ -113,7 +114,7 @@ def h(monkeypatch, tmp_path):
 
 
 def _done_file(mod, tmp_path):
-    return tmp_path / mod.OUTPUT_DIR / "done.txt"
+    return tmp_path / paths.cache_dir(mod.ARCHIVE) / "done.txt"
 
 
 ALL = [

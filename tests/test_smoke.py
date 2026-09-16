@@ -63,3 +63,33 @@ def test_cli_accepts_all_archives() -> None:
             text=True,
         )
         assert result.returncode == 0, f"'{archive}' failed: {result.stderr}"
+
+
+def test_every_pipeline_main_accepts_out_dir() -> None:
+    """--out-dir can be threaded down into each pipeline."""
+    import importlib
+    import inspect
+
+    for archive in [
+        "friesland",
+        "nationaalarchief",
+        "drentsarchief",
+        "bhic",
+        "overijssel",
+        "utrechtsarchief",
+        "limburg",
+        "noordholland",
+        "zeeland",
+        "gelderland",
+    ]:
+        mod = importlib.import_module(f"memories_crawl.{archive}")
+        assert "out_dir" in inspect.signature(mod.main).parameters, archive
+
+
+def test_cli_exposes_out_dir() -> None:
+    result = subprocess.run(
+        [sys.executable, "-m", "memories_crawl", "--help"],
+        capture_output=True,
+        text=True,
+    )
+    assert "--out-dir" in result.stdout

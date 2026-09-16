@@ -44,6 +44,8 @@ from pathlib import Path
 
 import requests
 
+from memories_crawl import paths
+
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
@@ -52,7 +54,7 @@ ARCHIVE_NAME = "Noord-Hollands Archief"
 ARCHIVE_NUMBER = "178"
 MAIS_ADT = "236"
 MAIS_VAST = "236"
-OUTPUT_DIR = Path("scans/noordholland")
+ARCHIVE = "noordholland"
 USER_AGENT = "memories-crawl/1.0"
 
 # ---------------------------------------------------------------------------
@@ -250,11 +252,11 @@ def _fullsize_url(thumb_url: str) -> str:
 
 
 def _token_cache_path(period_minr: int) -> Path:
-    return OUTPUT_DIR / f"tokens_{period_minr}.json"
+    return paths.cache_file(ARCHIVE, f"tokens_{period_minr}.json")
 
 
 def _partial_cache_path(period_minr: int) -> Path:
-    return OUTPUT_DIR / f"tokens_{period_minr}_partial.json"
+    return paths.cache_file(ARCHIVE, f"tokens_{period_minr}_partial.json")
 
 
 def _load_cached_tokens(period_minr: int) -> list[dict] | None:
@@ -316,7 +318,7 @@ def _discover_sections() -> list[dict]:
     expands each kantoor to discover MvS period children (filtering Tafel V-bis),
     and caches the result.
     """
-    cache_path = OUTPUT_DIR / "sections.json"
+    cache_path = paths.cache_file(ARCHIVE, "sections.json")
     if cache_path.exists():
         try:
             with open(cache_path, encoding="utf-8") as f:
@@ -516,11 +518,18 @@ def _write_metadata(
 
 
 def main(
-    invnrs: set[str] | None = None, list_invnrs: bool = False, csv_out: str | None = None
+    invnrs: set[str] | None = None,
+    list_invnrs: bool = False,
+    csv_out: str | None = None,
+    out_dir: Path | None = None,
 ) -> None:
+    if out_dir is not None:
+        paths.set_out_dir(out_dir)
+    output_dir = paths.archive_dir(ARCHIVE)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
     session = requests.Session()
     session.headers["User-Agent"] = USER_AGENT
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
     # Phase 1: Discover kantoren and their MvS period sections
     print("Discovering kantoor sections …")
@@ -540,7 +549,7 @@ def main(
     # would make every later run skip the rest of the section.
     filtered = invnrs is not None
 
-    done_file = OUTPUT_DIR / "done.txt"
+    done_file = paths.cache_file(ARCHIVE, "done.txt")
     done: set[str] = set()
     if done_file.exists() and not filtered:
         done = set(done_file.read_text().splitlines())
@@ -623,7 +632,7 @@ def main(
             inv_text = invnr_texts.get(invnr, "")
             # Clean kantoor name for folder use
             safe_kantoor = kantoor.replace(". ", "_").replace(" ", "_")[:60]
-            dest_dir = OUTPUT_DIR / safe_kantoor / f"{invnr:04d}"
+            dest_dir = output_dir / safe_kantoor / f"{invnr:04d}"
             print(f"  invnr {invnr} ({inv_text[:40].strip()}) …", end=" ", flush=True)
 
             _write_metadata(dest_dir, kantoor, invnr, inv_text, len(inv_pages))

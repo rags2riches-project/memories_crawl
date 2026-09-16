@@ -44,12 +44,14 @@ from pathlib import Path
 
 import requests
 
+from memories_crawl import paths
+
 API_BASE = "https://webservices.memorix.nl/genealogy"
 API_KEY = "a85387a2-fdb2-44d0-8209-3635e59c537e"
 REGISTER_FILTER = 'search_s_brontype:"Memorie van Successie"'
 PAGE_SIZE = 1000
-OUTPUT_DIR = Path("scans/drentsarchief")
-PROGRESS_CSV = Path("drentsarchief_deeds.csv")
+ARCHIVE = "drentsarchief"
+PROGRESS_CSV_NAME = "drentsarchief_deeds.csv"
 USER_AGENT = "memories-crawl/1.0"
 
 ARCHIVE_NAME = "Drents Archief"
@@ -206,10 +208,15 @@ def _write_metadata(dest_dir: Path, deed: dict, person: dict, register: dict) ->
         json.dump(meta, f, ensure_ascii=False, indent=2)
 
 
+def _progress_csv() -> Path:
+    return paths.cache_file(ARCHIVE, PROGRESS_CSV_NAME, legacy=Path(PROGRESS_CSV_NAME))
+
+
 def _load_done() -> set[str]:
     done: set[str] = set()
-    if PROGRESS_CSV.exists():
-        with open(PROGRESS_CSV, newline="", encoding="utf-8") as f:
+    progress_csv = _progress_csv()
+    if progress_csv.exists():
+        with open(progress_csv, newline="", encoding="utf-8") as f:
             for row in csv.DictReader(f):
                 if row.get("status") == "done":
                     done.add(row["deed_id"])
@@ -217,10 +224,17 @@ def _load_done() -> set[str]:
 
 
 def main(
-    invnrs: set[str] | None = None, list_invnrs: bool = False, csv_out: str | None = None
+    invnrs: set[str] | None = None,
+    list_invnrs: bool = False,
+    csv_out: str | None = None,
+    out_dir: Path | None = None,
 ) -> None:
+    if out_dir is not None:
+        paths.set_out_dir(out_dir)
+    output_dir = paths.archive_dir(ARCHIVE)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
     session = _session()
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
     print("Collecting Drents Archief Memorie van Successie registers …", flush=True)
     registers = _collect_registers(session)
@@ -235,8 +249,9 @@ def main(
         return
 
     done = _load_done()
-    write_header = not PROGRESS_CSV.exists() or PROGRESS_CSV.stat().st_size == 0
-    with open(PROGRESS_CSV, "a", newline="", encoding="utf-8") as progress:
+    progress_csv = _progress_csv()
+    write_header = not progress_csv.exists() or progress_csv.stat().st_size == 0
+    with open(progress_csv, "a", newline="", encoding="utf-8") as progress:
         writer = csv.DictWriter(progress, fieldnames=["deed_id", "invnr", "status", "n_scans"])
         if write_header:
             writer.writeheader()
@@ -271,7 +286,7 @@ def main(
                     progress.flush()
                     continue
 
-                dest_dir = OUTPUT_DIR / deed_id
+                dest_dir = output_dir / deed_id
                 _write_metadata(dest_dir, deed, persons_by_deed.get(deed_id, {}), reg)
 
                 n_done = 0

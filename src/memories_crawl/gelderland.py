@@ -75,6 +75,8 @@ from pathlib import Path
 
 import requests
 
+from memories_crawl import paths
+
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
@@ -82,7 +84,7 @@ import requests
 ARCHIVE_NAME = "Gelders Archief"
 MAIS_ADT = "37"
 MAIS_VAST = "37"
-OUTPUT_DIR = Path("scans/gelderland")
+ARCHIVE = "gelderland"
 USER_AGENT = "memories-crawl/1.0"
 
 #: Kantoor → archive code mapping.  Resolved 2026-05-11 by following the
@@ -292,15 +294,15 @@ def _fullsize_url(thumb_url: str) -> str:
 
 
 def _inventory_path(code: str) -> Path:
-    return OUTPUT_DIR / f"inventory_{code}.json"
+    return paths.cache_file(ARCHIVE, f"inventory_{code}.json")
 
 
 def _tokens_path(code: str) -> Path:
-    return OUTPUT_DIR / f"tokens_{code}.json"
+    return paths.cache_file(ARCHIVE, f"tokens_{code}.json")
 
 
 def _tokens_partial_path(code: str) -> Path:
-    return OUTPUT_DIR / f"tokens_{code}_partial.json"
+    return paths.cache_file(ARCHIVE, f"tokens_{code}_partial.json")
 
 
 def _save_json(path: Path, payload: object) -> None:
@@ -535,12 +537,19 @@ def _write_metadata(
 
 
 def main(
-    invnrs: set[str] | None = None, list_invnrs: bool = False, csv_out: str | None = None
+    invnrs: set[str] | None = None,
+    list_invnrs: bool = False,
+    csv_out: str | None = None,
+    out_dir: Path | None = None,
 ) -> None:
+    if out_dir is not None:
+        paths.set_out_dir(out_dir)
+    output_dir = paths.archive_dir(ARCHIVE)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
     session = requests.Session()
     session.headers["User-Agent"] = USER_AGENT
     session.headers["Referer"] = "https://www.geldersarchief.nl/"
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
     # --list-invnrs: discover + print for all kantoren, then exit
     if list_invnrs:
@@ -578,7 +587,7 @@ def main(
     # would make every later run skip the rest of the kantoor.
     filtered = invnrs is not None
 
-    done_file = OUTPUT_DIR / "done.txt"
+    done_file = paths.cache_file(ARCHIVE, "done.txt")
     done: set[str] = set()
     if done_file.exists() and not filtered:
         done = set(done_file.read_text().splitlines())
@@ -646,7 +655,7 @@ def main(
         downloaded = skipped = missing = 0
         for invnr, inv_pages in sorted(invnr_pages.items()):
             inv_text = invnr_texts.get(invnr, "")
-            dest_dir = OUTPUT_DIR / safe_kantoor / f"{invnr:04d}"
+            dest_dir = output_dir / safe_kantoor / f"{invnr:04d}"
 
             _write_metadata(dest_dir, kantoor, code, invnr, inv_text, len(inv_pages))
 
