@@ -84,6 +84,11 @@ reference:
       - overijssel.main
       - utrechtsarchief.main
       - zeeland.main
+      - paths.set_out_dir
+      - paths.out_dir
+      - paths.archive_dir
+      - paths.cache_dir
+      - paths.cache_file
 
   - title: Constants
     desc: Module-level constants and data
@@ -92,9 +97,9 @@ reference:
       - bhic.API_KEY
       - bhic.ARCHIVE_NAME
       - bhic.BRONTYPE_LABEL
-      - bhic.OUTPUT_DIR
+      - bhic.ARCHIVE
       - bhic.PAGE_SIZE
-      - bhic.PROGRESS_CSV
+      - bhic.PROGRESS_CSV_NAME
       - bhic.RATE_LIMIT_SLEEP
       - bhic.REGISTER_FILTER
       - bhic.REQUEST_SLEEP
@@ -103,9 +108,9 @@ reference:
       - drentsarchief.API_KEY
       - drentsarchief.ARCHIVE_NAME
       - drentsarchief.ARCHIVE_NUMBER
-      - drentsarchief.OUTPUT_DIR
+      - drentsarchief.ARCHIVE
       - drentsarchief.PAGE_SIZE
-      - drentsarchief.PROGRESS_CSV
+      - drentsarchief.PROGRESS_CSV_NAME
       - drentsarchief.RATE_LIMIT_SLEEP
       - drentsarchief.REGISTER_FILTER
       - drentsarchief.REQUEST_SLEEP
@@ -115,9 +120,9 @@ reference:
       - friesland.ARCHIVE_NAME
       - friesland.ARCHIVE_NUMBER
       - friesland.BRONTYPE_LABEL
-      - friesland.OUTPUT_DIR
+      - friesland.ARCHIVE
       - friesland.PAGE_SIZE
-      - friesland.PROGRESS_CSV
+      - friesland.PROGRESS_CSV_NAME
       - friesland.RATE_LIMIT_SLEEP
       - friesland.REGISTER_FILTER
       - friesland.REQUEST_SLEEP
@@ -126,7 +131,7 @@ reference:
       - gelderland.KANTOREN
       - gelderland.MAIS_ADT
       - gelderland.MAIS_VAST
-      - gelderland.OUTPUT_DIR
+      - gelderland.ARCHIVE
       - gelderland.USER_AGENT
       - limburg.ARCHIVE_CODES
       - limburg.ARCHIVE_NAME
@@ -134,19 +139,19 @@ reference:
       - limburg.IMAGE_FORMAT
       - limburg.MAIS_ADT
       - limburg.MAIS_VAST
-      - limburg.OUTPUT_DIR
+      - limburg.ARCHIVE
       - limburg.USER_AGENT
       - nationaalarchief.ACCESS_NUMBER
       - nationaalarchief.ARCHIVE_NAME
       - nationaalarchief.EAD_XML_URL
-      - nationaalarchief.OUTPUT_DIR
+      - nationaalarchief.ARCHIVE
       - nationaalarchief.USER_AGENT
       - nationaalarchief.VIEWER_URL_TPL
       - noordholland.ARCHIVE_NAME
       - noordholland.ARCHIVE_NUMBER
       - noordholland.MAIS_ADT
       - noordholland.MAIS_VAST
-      - noordholland.OUTPUT_DIR
+      - noordholland.ARCHIVE
       - noordholland.USER_AGENT
       - overijssel.ARCHIVE_NAME
       - overijssel.ARCHIVE_NUMBER
@@ -154,20 +159,22 @@ reference:
       - overijssel.KANTOOR_MINR
       - overijssel.MAIS_ADT
       - overijssel.MAIS_VAST
-      - overijssel.OUTPUT_DIR
+      - overijssel.ARCHIVE
       - overijssel.USER_AGENT
       - utrechtsarchief.ARCHIVE_NAME
       - utrechtsarchief.KANTOREN
       - utrechtsarchief.MAIS_ADT
       - utrechtsarchief.MAIS_VAST
-      - utrechtsarchief.OUTPUT_DIR
+      - utrechtsarchief.ARCHIVE
       - utrechtsarchief.USER_AGENT
       - zeeland.ARCHIVE_NAME
       - zeeland.ARCHIVE_NUMBER
       - zeeland.MAIS_ADT
       - zeeland.MAIS_VAST
-      - zeeland.OUTPUT_DIR
+      - zeeland.ARCHIVE
       - zeeland.USER_AGENT
+      - paths.DEFAULT_OUT_DIR
+      - paths.ENV_VAR
 
 # Site URL
 # --------
