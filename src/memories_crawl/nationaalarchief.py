@@ -24,7 +24,7 @@ from pathlib import Path
 
 import requests
 
-from memories_crawl import paths
+from memories_crawl import download, paths
 
 ACCESS_NUMBER = "3.06.05"
 EAD_XML_URL = "https://www.nationaalarchief.nl/onderzoeken/archief/3.06.05/download/xml"
@@ -297,12 +297,14 @@ def main(
     list_invnrs: bool = False,
     csv_out: str | None = None,
     out_dir: Path | None = None,
+    workers: int = download.DEFAULT_WORKERS,
 ) -> None:
     if out_dir is not None:
         paths.set_out_dir(out_dir)
     output_dir = paths.archive_dir(ARCHIVE)
 
     session = _session()
+    downloader = download.Downloader(_download_file, workers=workers, session_factory=_session)
     output_dir.mkdir(parents=True, exist_ok=True)
 
     print("Fetching inventory numbers from EAD XML …")
@@ -353,6 +355,7 @@ def main(
 
         _write_metadata(dest_dir, invnr, html, scans)
 
+        jobs: list[download.Job] = []
         for scan in scans:
             label = scan.get("label") or f"{invnr}_{scan.get('order', 0):04d}.jpg"
             default = scan.get("default") or {}
@@ -363,14 +366,15 @@ def main(
                     download_url = f"https://service.archief.nl/api/file/v1/default/{scan_id}"
             if not download_url:
                 continue
-            dest = dest_dir / label
-            _download_file(session, download_url, dest)
+            jobs.append(download.Job(download_url, dest_dir / label))
+        downloader.run(jobs)
 
         print(f"{len(scans)} scans")
         with open(done_file, "a") as f:
             f.write(key + "\n")
         time.sleep(1.0)
 
+    downloader.close()
     print("Done.")
 
 

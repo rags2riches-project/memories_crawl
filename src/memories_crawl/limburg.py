@@ -55,12 +55,12 @@ from __future__ import annotations
 import csv
 import json
 import re
-import time
+from collections import Counter
 from pathlib import Path
 
 import requests
 
-from memories_crawl import paths
+from memories_crawl import download, paths
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -72,6 +72,9 @@ MAIS_VAST = "0"
 IMAGE_BASE = "https://preserve3.archieven.nl/mi-0/fonc-rhcl"
 IMAGE_FORMAT = "large"  # 714 × 1024 PNG; see module docstring
 USER_AGENT = "memories-crawl/1.0"
+# Requests per second for the image fetches: the pace the old fixed
+# time.sleep(0.10) after every fetched image produced, now shared across workers.
+DOWNLOAD_RATE = 10.0
 
 ARCHIVE = "limburg"
 
@@ -407,6 +410,13 @@ def _image_url(code: str, tok: dict) -> str:
     )
 
 
+def _session() -> requests.Session:
+    s = requests.Session()
+    s.headers["User-Agent"] = USER_AGENT
+    s.headers["Referer"] = "https://www.archieven.nl/"
+    return s
+
+
 def _download_one(session: requests.Session, url: str, dest: Path) -> str:
     if dest.exists() and dest.stat().st_size > 0:
         return "exists"
@@ -450,15 +460,16 @@ def main(
     list_invnrs: bool = False,
     csv_out: str | None = None,
     out_dir: Path | None = None,
+    workers: int = download.DEFAULT_WORKERS,
 ) -> None:
     if out_dir is not None:
         paths.set_out_dir(out_dir)
     output_dir = paths.archive_dir(ARCHIVE)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    session = requests.Session()
-    session.headers["User-Agent"] = USER_AGENT
-    session.headers["Referer"] = "https://www.archieven.nl/"
+    downloader = download.Downloader(
+        _download_one, workers=workers, rate=DOWNLOAD_RATE, session_factory=_session
+    )
 
     # Phase 1: inventory per archive code (one Playwright session per code).
     inventories: dict[str, list[dict]] = {}
@@ -541,23 +552,25 @@ def main(
 
         # Download phase.
         print(f"\n  {code}: downloading scans …")
-        totals = {"downloaded": 0, "exists": 0, "missing": 0}
+        totals: Counter[str] = Counter()
         for it in items:
             tokens = _load_json(_tokens_cache_path(code, it["invnr"])) or []
             dest_dir = output_dir / code / str(it["invnr"])
             _write_metadata(dest_dir, code, it, len(tokens))
-            for tok in tokens:
-                url = _image_url(code, tok)
-                fn = f"NL-MtHCL_{code}_{tok['invnr']}_{tok['page']:04d}.png"
-                status = _download_one(session, url, dest_dir / fn)
-                totals[status] += 1
-                if status == "downloaded":
-                    time.sleep(0.10)
+            jobs = [
+                download.Job(
+                    _image_url(code, tok),
+                    dest_dir / f"NL-MtHCL_{code}_{tok['invnr']}_{tok['page']:04d}.png",
+                )
+                for tok in tokens
+            ]
+            totals += downloader.run(jobs)
         print(
             f"    {code}: {totals['downloaded']} new, "
             f"{totals['exists']} existing, {totals['missing']} missing"
         )
 
+    downloader.close()
     print("\nDone (Limburg).")
 
 

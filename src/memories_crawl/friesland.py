@@ -34,11 +34,12 @@ import csv
 import json
 import re
 import time
+from collections import Counter
 from pathlib import Path
 
 import requests
 
-from memories_crawl import paths
+from memories_crawl import download, paths
 
 API_BASE = "https://webservices.memorix.nl/genealogy"
 API_KEY = "aa030ec4-12d0-4dc0-afaf-b65fd6128b39"
@@ -243,12 +244,14 @@ def main(
     list_invnrs: bool = False,
     csv_out: str | None = None,
     out_dir: Path | None = None,
+    workers: int = download.DEFAULT_WORKERS,
 ) -> None:
     if out_dir is not None:
         paths.set_out_dir(out_dir)
     output_dir = paths.archive_dir(ARCHIVE)
 
     session = _session()
+    downloader = download.Downloader(_download_file, workers=workers, session_factory=_session)
     output_dir.mkdir(parents=True, exist_ok=True)
 
     print("Collecting Tresoar Memorie van Successie registers …")
@@ -312,7 +315,10 @@ def main(
             # Index deeds by id for person→deed join.
             deed_by_id: dict[str, dict] = {d.get("id", ""): d for d in deeds}
 
-            n_persons = 0
+            # Queue every person's scans in one batch per register, then write
+            # the sidecars once the page counts are in.
+            jobs: list[download.Job] = []
+            people: list[tuple[dict, dict, Path]] = []
             for person in persons:
                 deed_id = person.get("deed_id") or ""
                 deed = deed_by_id.get(deed_id)
@@ -326,10 +332,10 @@ def main(
 
                 slug = _person_slug(person)
                 dest_dir = output_dir / _sanitize(kantoor) / _sanitize(invnr) / slug
+                people.append((person, deed, dest_dir))
 
                 # Download scan pages from the deed's embedded assets.
                 assets = deed.get("asset") or []
-                n_done = 0
                 for asset_idx, asset in enumerate(assets, start=1):
                     url = asset.get("download") or ""
                     if not url:
@@ -338,11 +344,21 @@ def main(
                     url_path = url.split("?")[0]
                     ext = Path(url_path).suffix or ".jp2"
                     dest = dest_dir / f"{asset_idx:04d}{ext}"
-                    status = _download_file(session, url, dest)
-                    if status in ("downloaded", "exists"):
-                        n_done += 1
+                    jobs.append(download.Job(url, dest, key=dest_dir))
 
-                _write_person_metadata(dest_dir, person, deed, reg, n_done)
+            per_person: Counter[Path] = Counter()
+
+            def _tally(
+                job: download.Job, status: str, per_person: Counter[Path] = per_person
+            ) -> None:
+                if status in ("downloaded", "exists"):
+                    per_person[job.key] += 1
+
+            downloader.run(jobs, on_result=_tally)
+
+            n_persons = 0
+            for person, deed, dest_dir in people:
+                _write_person_metadata(dest_dir, person, deed, reg, per_person[dest_dir])
                 n_persons += 1
 
             writer.writerow(
@@ -358,6 +374,7 @@ def main(
             print(f"      {n_persons} persons", flush=True)
             time.sleep(REQUEST_SLEEP)
 
+    downloader.close()
     print("Friesland pipeline finished.")
 
 

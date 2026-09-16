@@ -41,7 +41,7 @@ from pathlib import Path
 
 import requests
 
-from memories_crawl import paths
+from memories_crawl import download, paths
 
 API_BASE = "https://webservices.memorix.nl/genealogy"
 API_KEY = "24c66d08-da4a-4d60-917f-5942681dcaa1"
@@ -282,12 +282,14 @@ def main(
     list_invnrs: bool = False,
     csv_out: str | None = None,
     out_dir: Path | None = None,
+    workers: int = download.DEFAULT_WORKERS,
 ) -> None:
     if out_dir is not None:
         paths.set_out_dir(out_dir)
     paths.archive_dir(ARCHIVE).mkdir(parents=True, exist_ok=True)
 
     session = _session()
+    downloader = download.Downloader(_download_file, workers=workers, session_factory=_session)
 
     print("Collecting BHIC Memorie van Successie registers …")
     registers = _paginate(session, "/register", REGISTER_FILTER, "register")
@@ -365,7 +367,7 @@ def main(
                 progress.flush()
                 continue
 
-            n_done = 0
+            jobs: list[download.Job] = []
             for asset in assets:
                 # Prefer the explicit asset-search "download" URL; fall back to
                 # building one from the file_id if missing.
@@ -375,10 +377,9 @@ def main(
                     url = f"https://images.memorix.nl/bhic/download/fullsize/{file_id}.jpg"
                 if not url:
                     continue
-                dest = dest_dir / _asset_filename(asset)
-                status = _download_file(session, url, dest)
-                if status in ("downloaded", "exists"):
-                    n_done += 1
+                jobs.append(download.Job(url, dest_dir / _asset_filename(asset)))
+            counts = downloader.run(jobs)
+            n_done = counts["downloaded"] + counts["exists"]
 
             writer.writerow(
                 {
@@ -393,6 +394,7 @@ def main(
             print(f"      ✓ {n_done} scans", flush=True)
             time.sleep(REQUEST_SLEEP)
 
+    downloader.close()
     print("BHIC pipeline finished.")
 
 

@@ -70,12 +70,11 @@ from __future__ import annotations
 import csv
 import json
 import re
-import time
 from pathlib import Path
 
 import requests
 
-from memories_crawl import paths
+from memories_crawl import download, paths
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -86,6 +85,9 @@ MAIS_ADT = "37"
 MAIS_VAST = "37"
 ARCHIVE = "gelderland"
 USER_AGENT = "memories-crawl/1.0"
+# Requests per second for the image fetches: the pace the old fixed
+# time.sleep(0.15) between images produced, now shared across workers.
+DOWNLOAD_RATE = 1 / 0.15
 
 #: Kantoor → archive code mapping.  Resolved 2026-05-11 by following the
 #: permalinks listed on https://www.geldersarchief.nl/informatie/zoekhulp/
@@ -485,6 +487,13 @@ def _harvest_page_tokens(
 # ---------------------------------------------------------------------------
 
 
+def _session() -> requests.Session:
+    s = requests.Session()
+    s.headers["User-Agent"] = USER_AGENT
+    s.headers["Referer"] = "https://www.geldersarchief.nl/"
+    return s
+
+
 def _download_file(session: requests.Session, url: str, dest: Path) -> str:
     if dest.exists() and dest.stat().st_size > 0:
         return "exists"
@@ -541,15 +550,16 @@ def main(
     list_invnrs: bool = False,
     csv_out: str | None = None,
     out_dir: Path | None = None,
+    workers: int = download.DEFAULT_WORKERS,
 ) -> None:
     if out_dir is not None:
         paths.set_out_dir(out_dir)
     output_dir = paths.archive_dir(ARCHIVE)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    session = requests.Session()
-    session.headers["User-Agent"] = USER_AGENT
-    session.headers["Referer"] = "https://www.geldersarchief.nl/"
+    downloader = download.Downloader(
+        _download_file, workers=workers, rate=DOWNLOAD_RATE, session_factory=_session
+    )
 
     # --list-invnrs: discover + print for all kantoren, then exit
     if list_invnrs:
@@ -659,19 +669,14 @@ def main(
 
             _write_metadata(dest_dir, kantoor, code, invnr, inv_text, len(inv_pages))
 
-            inv_downloaded = inv_skipped = inv_missing = 0
-            for pg in sorted(inv_pages, key=lambda x: x["page"]):
-                url = _fullsize_url(pg["thumb_url"])
-                # Filename matches the on-server convention: "{invnr}-{page:04d}.jpg"
-                dest = dest_dir / f"{invnr}-{pg['page']:04d}.jpg"
-                status = _download_file(session, url, dest)
-                if status == "downloaded":
-                    inv_downloaded += 1
-                elif status == "exists":
-                    inv_skipped += 1
-                else:
-                    inv_missing += 1
-                time.sleep(0.15)
+            # Filenames match the on-server convention: "{invnr}-{page:04d}.jpg"
+            jobs = [
+                download.Job(
+                    _fullsize_url(pg["thumb_url"]), dest_dir / f"{invnr}-{pg['page']:04d}.jpg"
+                )
+                for pg in sorted(inv_pages, key=lambda x: x["page"])
+            ]
+            inv_downloaded, inv_skipped, inv_missing = download.tally(downloader.run(jobs))
 
             print(
                 f"  invnr {invnr} ({inv_text[:40].strip()}) "
@@ -690,6 +695,8 @@ def main(
         grand_missing += missing
 
         mark_done(code)
+
+    downloader.close()
 
     if filtered and not matched_any:
         print(

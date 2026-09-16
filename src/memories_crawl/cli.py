@@ -24,7 +24,7 @@ import argparse
 import sys
 from pathlib import Path
 
-from memories_crawl import paths
+from memories_crawl import download, paths
 
 
 def _run_friesland(
@@ -32,11 +32,18 @@ def _run_friesland(
     list_invnrs: bool = False,
     csv_out: str | None = None,
     out_dir: Path | None = None,
+    workers: int = download.DEFAULT_WORKERS,
 ) -> None:
     print("=== Friesland pipeline (Tresoar / AlleFriezen, Memorix API) ===")
     from memories_crawl.friesland import main as run
 
-    run(invnrs=invnrs, list_invnrs=list_invnrs, csv_out=csv_out, out_dir=out_dir)
+    run(
+        invnrs=invnrs,
+        list_invnrs=list_invnrs,
+        csv_out=csv_out,
+        out_dir=out_dir,
+        workers=workers,
+    )
 
 
 def _run_nationaalarchief(
@@ -44,11 +51,18 @@ def _run_nationaalarchief(
     list_invnrs: bool = False,
     csv_out: str | None = None,
     out_dir: Path | None = None,
+    workers: int = download.DEFAULT_WORKERS,
 ) -> None:
     print("=== Nationaal Archief pipeline (Zuid-Holland, access 3.06.05) ===")
     from memories_crawl.nationaalarchief import main as run
 
-    run(invnrs=invnrs, list_invnrs=list_invnrs, csv_out=csv_out, out_dir=out_dir)
+    run(
+        invnrs=invnrs,
+        list_invnrs=list_invnrs,
+        csv_out=csv_out,
+        out_dir=out_dir,
+        workers=workers,
+    )
 
 
 def _run_drentsarchief(
@@ -56,11 +70,18 @@ def _run_drentsarchief(
     list_invnrs: bool = False,
     csv_out: str | None = None,
     out_dir: Path | None = None,
+    workers: int = download.DEFAULT_WORKERS,
 ) -> None:
     print("=== Drents Archief pipeline (Memorix API) ===")
     from memories_crawl.drentsarchief import main as run
 
-    run(invnrs=invnrs, list_invnrs=list_invnrs, csv_out=csv_out, out_dir=out_dir)
+    run(
+        invnrs=invnrs,
+        list_invnrs=list_invnrs,
+        csv_out=csv_out,
+        out_dir=out_dir,
+        workers=workers,
+    )
 
 
 def _run_bhic(
@@ -68,11 +89,18 @@ def _run_bhic(
     list_invnrs: bool = False,
     csv_out: str | None = None,
     out_dir: Path | None = None,
+    workers: int = download.DEFAULT_WORKERS,
 ) -> None:
     print("=== BHIC pipeline (Noord-Brabant, Memorix API) ===")
     from memories_crawl.bhic import main as run
 
-    run(invnrs=invnrs, list_invnrs=list_invnrs, csv_out=csv_out, out_dir=out_dir)
+    run(
+        invnrs=invnrs,
+        list_invnrs=list_invnrs,
+        csv_out=csv_out,
+        out_dir=out_dir,
+        workers=workers,
+    )
 
 
 def _run_overijssel(
@@ -80,11 +108,18 @@ def _run_overijssel(
     list_invnrs: bool = False,
     csv_out: str | None = None,
     out_dir: Path | None = None,
+    workers: int = download.DEFAULT_WORKERS,
 ) -> None:
     print("=== Overijssel pipeline (INCOMPLETE – see python/overijssel.py) ===")
     from memories_crawl.overijssel import main as run
 
-    run(invnrs=invnrs, list_invnrs=list_invnrs, csv_out=csv_out, out_dir=out_dir)
+    run(
+        invnrs=invnrs,
+        list_invnrs=list_invnrs,
+        csv_out=csv_out,
+        out_dir=out_dir,
+        workers=workers,
+    )
 
 
 def _run_utrechtsarchief(
@@ -92,11 +127,18 @@ def _run_utrechtsarchief(
     list_invnrs: bool = False,
     csv_out: str | None = None,
     out_dir: Path | None = None,
+    workers: int = download.DEFAULT_WORKERS,
 ) -> None:
     print("=== Utrechts Archief pipeline ===")
     from memories_crawl.utrechtsarchief import main as run
 
-    run(invnrs=invnrs, list_invnrs=list_invnrs, csv_out=csv_out, out_dir=out_dir)
+    run(
+        invnrs=invnrs,
+        list_invnrs=list_invnrs,
+        csv_out=csv_out,
+        out_dir=out_dir,
+        workers=workers,
+    )
 
 
 def _run_limburg(
@@ -104,11 +146,18 @@ def _run_limburg(
     list_invnrs: bool = False,
     csv_out: str | None = None,
     out_dir: Path | None = None,
+    workers: int = download.DEFAULT_WORKERS,
 ) -> None:
     print("=== Limburg pipeline (RHCL, archieven.nl MAIS) ===")
     from memories_crawl.limburg import main as run
 
-    run(invnrs=invnrs, list_invnrs=list_invnrs, csv_out=csv_out, out_dir=out_dir)
+    run(
+        invnrs=invnrs,
+        list_invnrs=list_invnrs,
+        csv_out=csv_out,
+        out_dir=out_dir,
+        workers=workers,
+    )
 
 
 def _run_noordholland(
@@ -116,11 +165,18 @@ def _run_noordholland(
     list_invnrs: bool = False,
     csv_out: str | None = None,
     out_dir: Path | None = None,
+    workers: int = download.DEFAULT_WORKERS,
 ) -> None:
     print("=== Noord-Holland pipeline (Noord-Hollands Archief) ===")
     from memories_crawl.noordholland import main as run
 
-    run(invnrs=invnrs, list_invnrs=list_invnrs, csv_out=csv_out, out_dir=out_dir)
+    run(
+        invnrs=invnrs,
+        list_invnrs=list_invnrs,
+        csv_out=csv_out,
+        out_dir=out_dir,
+        workers=workers,
+    )
 
 
 def _run_zeeland(
@@ -128,11 +184,18 @@ def _run_zeeland(
     list_invnrs: bool = False,
     csv_out: str | None = None,
     out_dir: Path | None = None,
+    workers: int = download.DEFAULT_WORKERS,
 ) -> None:
     print("=== Zeeland pipeline (Zeeuws Archief) ===")
     from memories_crawl.zeeland import main as run
 
-    run(invnrs=invnrs, list_invnrs=list_invnrs, csv_out=csv_out, out_dir=out_dir)
+    run(
+        invnrs=invnrs,
+        list_invnrs=list_invnrs,
+        csv_out=csv_out,
+        out_dir=out_dir,
+        workers=workers,
+    )
 
 
 def _run_gelderland(
@@ -140,11 +203,18 @@ def _run_gelderland(
     list_invnrs: bool = False,
     csv_out: str | None = None,
     out_dir: Path | None = None,
+    workers: int = download.DEFAULT_WORKERS,
 ) -> None:
     print("=== Gelderland pipeline (Gelders Archief) ===")
     from memories_crawl.gelderland import main as run
 
-    run(invnrs=invnrs, list_invnrs=list_invnrs, csv_out=csv_out, out_dir=out_dir)
+    run(
+        invnrs=invnrs,
+        list_invnrs=list_invnrs,
+        csv_out=csv_out,
+        out_dir=out_dir,
+        workers=workers,
+    )
 
 
 PIPELINES = {
@@ -195,6 +265,18 @@ def main() -> None:
         ),
     )
     parser.add_argument(
+        "--workers",
+        type=int,
+        default=download.DEFAULT_WORKERS,
+        help=(
+            "Concurrent image downloads per archive "
+            f"(default: {download.DEFAULT_WORKERS}). "
+            "--workers 1 restores the strictly sequential behaviour of earlier "
+            "releases. Raising it is at your own risk: these are small public "
+            "archives, so stay well below what the server can take."
+        ),
+    )
+    parser.add_argument(
         "--csv",
         dest="csv_out",
         nargs="?",
@@ -220,6 +302,7 @@ def main() -> None:
                 list_invnrs=args.list_invnrs,
                 csv_out=csv_path,
                 out_dir=out_dir,
+                workers=args.workers,
             )
         except Exception as exc:
             print(f"ERROR in {name}: {exc}", file=sys.stderr)

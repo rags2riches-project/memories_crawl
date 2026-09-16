@@ -39,12 +39,11 @@ from __future__ import annotations
 import csv
 import json
 import re
-import time
 from pathlib import Path
 
 import requests
 
-from memories_crawl import paths
+from memories_crawl import download, paths
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -56,6 +55,9 @@ MAIS_ADT = "236"
 MAIS_VAST = "236"
 ARCHIVE = "noordholland"
 USER_AGENT = "memories-crawl/1.0"
+# Requests per second for the image fetches: the pace the old fixed
+# time.sleep(0.15) between images produced, now shared across workers.
+DOWNLOAD_RATE = 1 / 0.15
 
 # ---------------------------------------------------------------------------
 # URL builders
@@ -478,6 +480,12 @@ def _harvest_page_tokens(period_minr: int) -> list[dict]:
 # ---------------------------------------------------------------------------
 
 
+def _session() -> requests.Session:
+    s = requests.Session()
+    s.headers["User-Agent"] = USER_AGENT
+    return s
+
+
 def _download_file(session: requests.Session, url: str, dest: Path) -> str:
     if dest.exists() and dest.stat().st_size > 0:
         return "exists"
@@ -522,14 +530,16 @@ def main(
     list_invnrs: bool = False,
     csv_out: str | None = None,
     out_dir: Path | None = None,
+    workers: int = download.DEFAULT_WORKERS,
 ) -> None:
     if out_dir is not None:
         paths.set_out_dir(out_dir)
     output_dir = paths.archive_dir(ARCHIVE)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    session = requests.Session()
-    session.headers["User-Agent"] = USER_AGENT
+    downloader = download.Downloader(
+        _download_file, workers=workers, rate=DOWNLOAD_RATE, session_factory=_session
+    )
 
     # Phase 1: Discover kantoren and their MvS period sections
     print("Discovering kantoor sections …")
@@ -637,18 +647,11 @@ def main(
 
             _write_metadata(dest_dir, kantoor, invnr, inv_text, len(inv_pages))
 
-            inv_downloaded = inv_skipped = inv_missing = 0
-            for p in sorted(inv_pages, key=lambda x: x["page"]):
-                url = _fullsize_url(p["thumb_url"])
-                dest = dest_dir / f"{p['page']:04d}.jpg"
-                status = _download_file(session, url, dest)
-                if status == "downloaded":
-                    inv_downloaded += 1
-                elif status == "exists":
-                    inv_skipped += 1
-                else:
-                    inv_missing += 1
-                time.sleep(0.15)
+            jobs = [
+                download.Job(_fullsize_url(p["thumb_url"]), dest_dir / f"{p['page']:04d}.jpg")
+                for p in sorted(inv_pages, key=lambda x: x["page"])
+            ]
+            inv_downloaded, inv_skipped, inv_missing = download.tally(downloader.run(jobs))
 
             print(
                 f"{len(inv_pages)} pages "
@@ -666,6 +669,8 @@ def main(
         grand_missing += missing
 
         mark_done(str(period_minr))
+
+    downloader.close()
 
     if filtered and not matched_any:
         print(

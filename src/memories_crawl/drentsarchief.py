@@ -40,11 +40,12 @@ from __future__ import annotations
 import csv
 import json
 import time
+from collections import Counter
 from pathlib import Path
 
 import requests
 
-from memories_crawl import paths
+from memories_crawl import download, paths
 
 API_BASE = "https://webservices.memorix.nl/genealogy"
 API_KEY = "a85387a2-fdb2-44d0-8209-3635e59c537e"
@@ -228,6 +229,7 @@ def main(
     list_invnrs: bool = False,
     csv_out: str | None = None,
     out_dir: Path | None = None,
+    workers: int = download.DEFAULT_WORKERS,
 ) -> None:
     if out_dir is not None:
         paths.set_out_dir(out_dir)
@@ -235,6 +237,7 @@ def main(
     output_dir.mkdir(parents=True, exist_ok=True)
 
     session = _session()
+    downloader = download.Downloader(_download_file, workers=workers, session_factory=_session)
 
     print("Collecting Drents Archief Memorie van Successie registers …", flush=True)
     registers = _collect_registers(session)
@@ -272,7 +275,10 @@ def main(
                 flush=True,
             )
 
-            n_scans = 0
+            # One batch per register: a deed usually holds a single scan, so
+            # queueing the whole register is what keeps the workers busy.
+            jobs: list[download.Job] = []
+            fetched: list[str] = []
             for deed in deeds:
                 deed_id = deed.get("id") or ""
                 if not deed_id or deed_id in done:
@@ -288,16 +294,26 @@ def main(
 
                 dest_dir = output_dir / deed_id
                 _write_metadata(dest_dir, deed, persons_by_deed.get(deed_id, {}), reg)
+                fetched.append(deed_id)
 
-                n_done = 0
                 for asset_idx, asset in enumerate(assets, start=1):
                     download_url = asset.get("download") or asset.get("thumb.large") or ""
                     if not download_url:
                         continue
                     dest = dest_dir / f"{asset_idx:04d}.jpg"
-                    if _download_file(session, download_url, dest) in ("downloaded", "exists"):
-                        n_done += 1
+                    jobs.append(download.Job(download_url, dest, key=deed_id))
 
+            per_deed: Counter[str] = Counter()
+
+            def _tally(job: download.Job, status: str, per_deed: Counter[str] = per_deed) -> None:
+                if status in ("downloaded", "exists"):
+                    per_deed[job.key] += 1
+
+            downloader.run(jobs, on_result=_tally)
+
+            n_scans = 0
+            for deed_id in fetched:
+                n_done = per_deed[deed_id]
                 writer.writerow(
                     {"deed_id": deed_id, "invnr": invnr, "status": "done", "n_scans": n_done}
                 )
@@ -307,6 +323,7 @@ def main(
             print(f"      ✓ {n_scans} scans", flush=True)
             time.sleep(REQUEST_SLEEP)
 
+    downloader.close()
     print("Drents Archief pipeline finished.")
 
 
