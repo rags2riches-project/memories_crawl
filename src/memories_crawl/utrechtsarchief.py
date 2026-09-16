@@ -42,7 +42,7 @@ from pathlib import Path
 
 import requests
 
-from memories_crawl import download, filters, paths
+from memories_crawl import download, filters, listing, paths
 from memories_crawl.summary import PageTally, RunSummary, announce
 
 ARCHIVE_NAME = "Het Utrechts Archief"
@@ -477,6 +477,8 @@ def main(
     list_invnrs: bool = False,
     csv_out: str | None = None,
     out_dir: Path | None = None,
+    only_digitized: bool = False,
+    count_scans: bool = False,
     workers: int = download.DEFAULT_WORKERS,
     kantoren: set[str] | None = None,
 ) -> RunSummary | None:
@@ -560,15 +562,18 @@ def main(
                     print(f"    {'invnr':>6}  {'description':<30}  pages")
                     print(f"    {'------':>6}  {'----------------------------':<30}  -----")
                     for invnr in sorted(invnr_pages.keys()):
+                        pages_here = len(invnr_pages[invnr])
+                        if only_digitized and not listing.has_scans(pages_here):
+                            continue
                         desc = invnr_texts.get(invnr, "")[:30]
-                        print(f"    {invnr:>6}  {desc:<30}  {len(invnr_pages[invnr]):>5}")
+                        print(f"    {invnr:>6}  {desc:<30}  {pages_here:>5}")
                         csv_rows.append(
                             {
                                 "kantoor": kantoor,
                                 "section": section["text"][:60],
                                 "invnr": invnr,
                                 "description": invnr_texts.get(invnr, ""),
-                                "pages": len(invnr_pages[invnr]),
+                                "pages": pages_here,
                             }
                         )
                     continue

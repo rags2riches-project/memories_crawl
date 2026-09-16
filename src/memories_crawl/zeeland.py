@@ -46,7 +46,7 @@ from pathlib import Path
 
 import requests
 
-from memories_crawl import download, filters, paths
+from memories_crawl import download, filters, listing, paths
 from memories_crawl.summary import PageTally, RunSummary, announce
 
 # ---------------------------------------------------------------------------
@@ -545,11 +545,44 @@ def _write_metadata(
 # ---------------------------------------------------------------------------
 
 
+LIST_FIELDS = ["kantoor", "invnr", "description", "pages"]
+
+
+def _cached_page_counts(kantoor_minr: int) -> tuple[dict[int, int], bool] | None:
+    """Pages per invnr from a warm token cache, without printing or harvesting.
+
+    Returns ``(counts, complete)`` or ``None`` when no cache exists. ``complete``
+    is False for a partial cache, where an invnr missing from the counts means
+    "not harvested yet", not "no pages" -- so a listing renders it as unknown
+    rather than as a zero that ``--only-digitized`` would throw away.
+    """
+    for path, complete in (
+        (_token_cache_path(kantoor_minr), True),
+        (_partial_cache_path(kantoor_minr), False),
+    ):
+        if not path.exists():
+            continue
+        try:
+            with open(path, encoding="utf-8") as f:
+                tokens = json.load(f)
+        except (json.JSONDecodeError, OSError):
+            continue
+        if not tokens:
+            continue
+        counts: dict[int, int] = {}
+        for tok in tokens:
+            counts[tok["invnr"]] = counts.get(tok["invnr"], 0) + 1
+        return counts, complete
+    return None
+
+
 def main(
     invnrs: set[str] | None = None,
     list_invnrs: bool = False,
     csv_out: str | None = None,
     out_dir: Path | None = None,
+    only_digitized: bool = False,
+    count_scans: bool = False,
     workers: int = download.DEFAULT_WORKERS,
     kantoren: set[str] | None = None,
 ) -> RunSummary | None:
@@ -643,16 +676,40 @@ def main(
 
             # --list-invnrs: print and skip token harvest + download
             if list_invnrs:
+                # Page counts come from a warm token cache for free. Harvesting them
+                # fresh means driving Playwright over every invnr in the kantoor, so
+                # that only happens under --count-scans.
+                if count_scans:
+                    harvested = _harvest_page_tokens(
+                        kantoor_minr, all_items, write_cache=not filtered
+                    )
+                    page_counts: dict[int, int] = {}
+                    for tok in harvested:
+                        page_counts[tok["invnr"]] = page_counts.get(tok["invnr"], 0) + 1
+                    cached: tuple[dict[int, int], bool] | None = (page_counts, True)
+                else:
+                    cached = _cached_page_counts(kantoor_minr)
+
                 print(f"\n{kantoor}:")
-                print(f"  {'invnr':>6}  description")
-                print(f"  {'------':>6}  -----------")
+                print(f"  {'invnr':>6}  {'pages':>6}  description")
+                print(f"  {'------':>6}  {'------':>6}  -----------")
                 for it in digitized:
-                    print(f"  {it['invnr']:>6}  {it['text'][:60]}")
+                    if cached is None:
+                        pages_here: int | None = None
+                    else:
+                        counts, complete = cached
+                        pages_here = counts.get(it["invnr"], 0 if complete else None)
+                    if only_digitized and not listing.has_scans(pages_here):
+                        continue
+                    print(
+                        f"  {it['invnr']:>6}  {listing.fmt_count(pages_here):>6}  {it['text'][:60]}"
+                    )
                     csv_rows.append(
                         {
                             "kantoor": kantoor,
                             "invnr": it["invnr"],
                             "description": it["text"],
+                            "pages": listing.fmt_count(pages_here),
                         }
                     )
                 continue
@@ -724,7 +781,7 @@ def main(
             print()
             if csv_out and csv_rows:
                 with open(csv_out, "w", newline="", encoding="utf-8") as f:
-                    writer = csv.DictWriter(f, fieldnames=["kantoor", "invnr", "description"])
+                    writer = csv.DictWriter(f, fieldnames=LIST_FIELDS)
                     writer.writeheader()
                     writer.writerows(csv_rows)
                 print(f"Wrote {len(csv_rows)} rows to {csv_out}\n")

@@ -33,6 +33,8 @@ def _run_friesland(
     list_invnrs: bool = False,
     csv_out: str | None = None,
     out_dir: Path | None = None,
+    only_digitized: bool = False,
+    count_scans: bool = False,
     workers: int = download.DEFAULT_WORKERS,
     kantoren: set[str] | None = None,
     refresh_cache: bool = False,
@@ -45,6 +47,8 @@ def _run_friesland(
         list_invnrs=list_invnrs,
         csv_out=csv_out,
         out_dir=out_dir,
+        only_digitized=only_digitized,
+        count_scans=count_scans,
         workers=workers,
         kantoren=kantoren,
         refresh_cache=refresh_cache,
@@ -56,6 +60,8 @@ def _run_nationaalarchief(
     list_invnrs: bool = False,
     csv_out: str | None = None,
     out_dir: Path | None = None,
+    only_digitized: bool = False,
+    count_scans: bool = False,
     workers: int = download.DEFAULT_WORKERS,
     kantoren: set[str] | None = None,
     refresh_cache: bool = False,
@@ -73,6 +79,8 @@ def _run_nationaalarchief(
         list_invnrs=list_invnrs,
         csv_out=csv_out,
         out_dir=out_dir,
+        only_digitized=only_digitized,
+        count_scans=count_scans,
         workers=workers,
         refresh_cache=refresh_cache,
     )
@@ -83,6 +91,8 @@ def _run_drentsarchief(
     list_invnrs: bool = False,
     csv_out: str | None = None,
     out_dir: Path | None = None,
+    only_digitized: bool = False,
+    count_scans: bool = False,
     workers: int = download.DEFAULT_WORKERS,
     kantoren: set[str] | None = None,
     refresh_cache: bool = False,
@@ -95,6 +105,8 @@ def _run_drentsarchief(
         list_invnrs=list_invnrs,
         csv_out=csv_out,
         out_dir=out_dir,
+        only_digitized=only_digitized,
+        count_scans=count_scans,
         workers=workers,
         kantoren=kantoren,
         refresh_cache=refresh_cache,
@@ -106,6 +118,8 @@ def _run_bhic(
     list_invnrs: bool = False,
     csv_out: str | None = None,
     out_dir: Path | None = None,
+    only_digitized: bool = False,
+    count_scans: bool = False,
     workers: int = download.DEFAULT_WORKERS,
     kantoren: set[str] | None = None,
     refresh_cache: bool = False,
@@ -118,6 +132,8 @@ def _run_bhic(
         list_invnrs=list_invnrs,
         csv_out=csv_out,
         out_dir=out_dir,
+        only_digitized=only_digitized,
+        count_scans=count_scans,
         workers=workers,
         kantoren=kantoren,
         refresh_cache=refresh_cache,
@@ -129,6 +145,8 @@ def _run_overijssel(
     list_invnrs: bool = False,
     csv_out: str | None = None,
     out_dir: Path | None = None,
+    only_digitized: bool = False,
+    count_scans: bool = False,
     workers: int = download.DEFAULT_WORKERS,
     kantoren: set[str] | None = None,
 ) -> RunSummary | None:
@@ -140,6 +158,8 @@ def _run_overijssel(
         list_invnrs=list_invnrs,
         csv_out=csv_out,
         out_dir=out_dir,
+        only_digitized=only_digitized,
+        count_scans=count_scans,
         workers=workers,
         kantoren=kantoren,
     )
@@ -150,6 +170,8 @@ def _run_utrechtsarchief(
     list_invnrs: bool = False,
     csv_out: str | None = None,
     out_dir: Path | None = None,
+    only_digitized: bool = False,
+    count_scans: bool = False,
     workers: int = download.DEFAULT_WORKERS,
     kantoren: set[str] | None = None,
 ) -> RunSummary | None:
@@ -161,6 +183,8 @@ def _run_utrechtsarchief(
         list_invnrs=list_invnrs,
         csv_out=csv_out,
         out_dir=out_dir,
+        only_digitized=only_digitized,
+        count_scans=count_scans,
         workers=workers,
         kantoren=kantoren,
     )
@@ -171,6 +195,8 @@ def _run_limburg(
     list_invnrs: bool = False,
     csv_out: str | None = None,
     out_dir: Path | None = None,
+    only_digitized: bool = False,
+    count_scans: bool = False,
     workers: int = download.DEFAULT_WORKERS,
     kantoren: set[str] | None = None,
 ) -> RunSummary | None:
@@ -182,6 +208,8 @@ def _run_limburg(
         list_invnrs=list_invnrs,
         csv_out=csv_out,
         out_dir=out_dir,
+        only_digitized=only_digitized,
+        count_scans=count_scans,
         workers=workers,
         kantoren=kantoren,
     )
@@ -192,6 +220,8 @@ def _run_noordholland(
     list_invnrs: bool = False,
     csv_out: str | None = None,
     out_dir: Path | None = None,
+    only_digitized: bool = False,
+    count_scans: bool = False,
     workers: int = download.DEFAULT_WORKERS,
     kantoren: set[str] | None = None,
 ) -> RunSummary | None:
@@ -203,6 +233,8 @@ def _run_noordholland(
         list_invnrs=list_invnrs,
         csv_out=csv_out,
         out_dir=out_dir,
+        only_digitized=only_digitized,
+        count_scans=count_scans,
         workers=workers,
         kantoren=kantoren,
     )
@@ -213,6 +245,8 @@ def _run_zeeland(
     list_invnrs: bool = False,
     csv_out: str | None = None,
     out_dir: Path | None = None,
+    only_digitized: bool = False,
+    count_scans: bool = False,
     workers: int = download.DEFAULT_WORKERS,
     kantoren: set[str] | None = None,
 ) -> RunSummary | None:
@@ -224,6 +258,8 @@ def _run_zeeland(
         list_invnrs=list_invnrs,
         csv_out=csv_out,
         out_dir=out_dir,
+        only_digitized=only_digitized,
+        count_scans=count_scans,
         workers=workers,
         kantoren=kantoren,
     )
@@ -234,6 +270,8 @@ def _run_gelderland(
     list_invnrs: bool = False,
     csv_out: str | None = None,
     out_dir: Path | None = None,
+    only_digitized: bool = False,
+    count_scans: bool = False,
     workers: int = download.DEFAULT_WORKERS,
     kantoren: set[str] | None = None,
 ) -> RunSummary | None:
@@ -245,6 +283,8 @@ def _run_gelderland(
         list_invnrs=list_invnrs,
         csv_out=csv_out,
         out_dir=out_dir,
+        only_digitized=only_digitized,
+        count_scans=count_scans,
         workers=workers,
         kantoren=kantoren,
     )
@@ -342,6 +382,26 @@ def main() -> None:
         help="Write --list-invnrs output to a CSV file. "
         "Optional filename (default: {pipeline}_invnrs.csv).",
     )
+    parser.add_argument(
+        "--only-digitized",
+        action="store_true",
+        default=False,
+        help=(
+            "Skip inventarisnummers that are known to have no scans. Counts the "
+            "pipeline could not obtain are never treated as zero, so nothing is "
+            "hidden on a guess."
+        ),
+    )
+    parser.add_argument(
+        "--count-scans",
+        action="store_true",
+        default=False,
+        help=(
+            "Request exact counts in --list-invnrs. Costs extra metadata "
+            "requests per inventarisnummer (a Playwright token harvest for "
+            "the MAIS archives), so it is opt-in."
+        ),
+    )
     args = parser.parse_args()
 
     out_dir = paths.set_out_dir(args.out_dir)
@@ -361,6 +421,8 @@ def main() -> None:
             "csv_out": csv_path,
             "out_dir": out_dir,
         }
+        kwargs["only_digitized"] = args.only_digitized
+        kwargs["count_scans"] = args.count_scans
         kwargs["workers"] = args.workers
         kwargs["kantoren"] = kantoor_filter
         if name in CACHED_LISTING_PIPELINES:

@@ -24,7 +24,7 @@ from pathlib import Path
 
 import requests
 
-from memories_crawl import download, filters, paths, regcache
+from memories_crawl import download, filters, listing, paths, regcache
 from memories_crawl.summary import PageTally, RunSummary
 
 ACCESS_NUMBER = "3.06.05"
@@ -43,29 +43,32 @@ ARCHIVE_NAME = "Nationaal Archief"
 # Complete fallback list of Memories van Successie invnrs (section 2.4),
 # excluding Tafel V-bis and Tafel VI, derived from the EAD XML (July 2022 edition).
 # Covers all 21 kantoren; gaps in the sequence are the excluded Tafel items.
-_FALLBACK_INVNR_RANGES: list[tuple[int, int]] = [
-    (2276, 2450),  # Kantoor Alphen aan de Rijn (2.4.01)
-    (2469, 2534),  # Kantoor Brielle (2.4.02)
-    (2551, 2752),  # Kantoor Delft (2.4.03)
-    (2798, 2964),  # Kantoor Dordrecht (2.4.04)
-    (3005, 3180),  # Kantoor Gorinchem (2.4.05)
-    (3201, 3412),  # Kantoor Gouda (2.4.06)
-    (3468, 3889),  # Kantoor 's-Gravenhage (2.4.07) part 1 (excl. Tafel V-bis 3897-3943)
-    (3944, 3946),  # Kantoor 's-Gravenhage part 2 (excl. Tafel VI 3947-4028)
-    (4029, 4238),  # Kantoor Leiden (2.4.09)
-    (4265, 4431),  # Kantoor Noordwijk (2.4.10)
-    (4444, 4560),  # Kantoor Oud-Beijerland (2.4.11)
-    (4585, 4723),  # Kantoor Rotterdam (2.4.12) part 1 (excl. Tafel 6 / V-bis 4724-…)
-    (4962, 5088),  # Kantoor Schiedam (2.4.13)
-    (5124, 5292),  # Kantoor Schoonhoven (2.4.14) + Sliedrecht/Papendrecht (2.4.15)
-    (5310, 5414),  # Kantoor Sommelsdijk/Middelharnis/Dirksland (2.4.16)
-    (5501, 5508),  # Kantoor Vlaardingen (2.4.18)
-    (5611, 5740),  # Kantoor Woubrugge (2.4.20) + IJsselmonde (2.4.21) part 1
-    (5744, 5810),  # Kantoor IJsselmonde part 2 (excl. Tafel V-bis 5741-5743)
-    (5815, 5816),  # Kantoor IJsselmonde part 3
-    (5819, 7021),  # Kantoor Rotterdam (2.4.12) part 2 + Hillegersberg (2.4.08) + others
-    (7106, 7139),  # Various kantoren (Tafel V-bis tails excluded)
-    (7212, 7268),  # Various kantoren (tail)
+_FALLBACK_INVNR_RANGES: list[tuple[int, int, str]] = [
+    (2276, 2450, "Kantoor Alphen aan de Rijn"),  # 2.4.01
+    (2469, 2534, "Kantoor Brielle"),  # 2.4.02
+    (2551, 2752, "Kantoor Delft"),  # 2.4.03
+    (2798, 2964, "Kantoor Dordrecht"),  # 2.4.04
+    (3005, 3180, "Kantoor Gorinchem"),  # 2.4.05
+    (3201, 3412, "Kantoor Gouda"),  # 2.4.06
+    # 2.4.07 part 1 (excl. Tafel V-bis 3897-3943)
+    (3468, 3889, "Kantoor 's-Gravenhage"),
+    (3944, 3946, "Kantoor 's-Gravenhage"),  # part 2 (excl. Tafel VI 3947-4028)
+    (4029, 4238, "Kantoor Leiden"),  # 2.4.09
+    (4265, 4431, "Kantoor Noordwijk"),  # 2.4.10
+    (4444, 4560, "Kantoor Oud-Beijerland"),  # 2.4.11
+    (4585, 4723, "Kantoor Rotterdam"),  # 2.4.12 part 1 (excl. Tafel 6 / V-bis 4724-…)
+    (4962, 5088, "Kantoor Schiedam"),  # 2.4.13
+    # 2.4.14 + Sliedrecht/Papendrecht (2.4.15)
+    (5124, 5292, "Kantoor Schoonhoven"),
+    (5310, 5414, "Kantoor Sommelsdijk/Middelharnis/Dirksland"),  # 2.4.16
+    (5501, 5508, "Kantoor Vlaardingen"),  # 2.4.18
+    (5611, 5740, "Kantoor Woubrugge"),  # 2.4.20 + IJsselmonde (2.4.21) part 1
+    (5744, 5810, "Kantoor IJsselmonde"),  # part 2 (excl. Tafel V-bis 5741-5743)
+    (5815, 5816, "Kantoor IJsselmonde"),  # part 3
+    # 2.4.12 part 2 + Hillegersberg (2.4.08) + others
+    (5819, 7021, "Kantoor Rotterdam e.a."),
+    (7106, 7139, "diverse kantoren"),  # Tafel V-bis tails excluded
+    (7212, 7268, "diverse kantoren"),  # tail
 ]
 
 
@@ -94,62 +97,29 @@ def _get_unittitle(elem: ET.Element) -> str:
     return e.text.strip() if e is not None and e.text else ""
 
 
-def _collect_leaf_invnrs(elem: ET.Element) -> list[int]:
-    """Recursively collect all leaf-level purely-numeric unitid values."""
+def _collect_leaf_invnrs(elem: ET.Element) -> list[dict]:
+    """Recursively collect leaf-level purely-numeric unitids as inventory rows.
+
+    Each row is ``{invnr, has_scans}``. ``has_scans`` comes from the ``<dao>``
+    METS link the EAD attaches to every digitized item, so whether an
+    inventarisnummer has scans at all is known from the one XML download the
+    pipeline already makes -- no viewer page needed.
+    """
     children = _get_children(elem)
     if not children:
         uid = _get_unitid(elem)
         if uid.isdigit():
-            return [int(uid)]
+            return [{"invnr": int(uid), "has_scans": bool(elem.findall("did/dao"))}]
         return []
-    results: list[int] = []
+    results: list[dict] = []
     for child in children:
         results.extend(_collect_leaf_invnrs(child))
     return results
 
 
 def _parse_ead_invnrs(xml_bytes: bytes) -> list[int]:
-    """Parse the EAD XML and return sorted Memories invnrs from section 2.4.
-
-    Excludes Tafel V-bis and Tafel VI subsections.
-    """
-    root = ET.fromstring(xml_bytes)
-    dsc = root.find(".//dsc")
-    if dsc is None:
-        return []
-
-    top_level = _get_children(dsc)
-    section2 = next((s for s in top_level if _get_unitid(s) == "2"), None)
-    if section2 is None:
-        return []
-
-    section24 = next((s for s in _get_children(section2) if _get_unitid(s) == "2.4"), None)
-    if section24 is None:
-        return []
-
-    all_invnrs: list[int] = []
-
-    for kantoor in _get_children(section24):
-        subsections = _get_children(kantoor)
-        if not subsections:
-            all_invnrs.extend(_collect_leaf_invnrs(kantoor))
-            continue
-
-        for subsec in subsections:
-            sub_title = _get_unittitle(subsec).lower()
-            if _is_excluded_subsection(sub_title):
-                continue
-
-            sub_children = _get_children(subsec)
-            if sub_children:
-                for subsub in sub_children:
-                    subsub_title = _get_unittitle(subsub).lower()
-                    if not _is_excluded_subsection(subsub_title):
-                        all_invnrs.extend(_collect_leaf_invnrs(subsub))
-            else:
-                all_invnrs.extend(_collect_leaf_invnrs(subsec))
-
-    return sorted(set(all_invnrs))
+    """Compatibility projection of the richer EAD entries."""
+    return [e["invnr"] for e in _parse_ead_entries(xml_bytes)]
 
 
 def _is_excluded_subsection(title_lower: str) -> bool:
@@ -165,11 +135,7 @@ def _is_excluded_subsection(title_lower: str) -> bool:
 
 
 def _fallback_invnrs() -> list[int]:
-    """Return the hardcoded fallback list of Memories invnrs."""
-    result: list[int] = []
-    for lo, hi in _FALLBACK_INVNR_RANGES:
-        result.extend(range(lo, hi + 1))
-    return sorted(set(result))
+    return [e["invnr"] for e in _fallback_entries()]
 
 
 def _collect_inventory_numbers(session: requests.Session) -> list[int]:
@@ -203,29 +169,29 @@ def _fetch_inventory_numbers(session: requests.Session, refresh_cache: bool = Fa
     return _fallback_invnrs()
 
 
-def _extract_scans_from_viewer(html: str) -> list[dict]:
-    """Extract the scans array from the drupal-settings-json script tag."""
-    match = re.search(
-        r'<script[^>]+data-drupal-selector="drupal-settings-json"[^>]*>(.*?)</script>',
-        html,
-        re.DOTALL,
-    )
-    if not match:
-        return []
+def _extract_scans_from_viewer(html: str, *, strict: bool = False) -> list[dict]:
+    """Extract scan arrays; strict counting distinguishes invalid pages from zero."""
     try:
+        match = re.search(
+            r'<script[^>]+data-drupal-selector="drupal-settings-json"[^>]*>(.*?)</script>',
+            html,
+            re.DOTALL,
+        )
+        if not match:
+            raise ValueError("missing viewer settings")
         settings = json.loads(match.group(1))
-    except json.JSONDecodeError:
-        return []
-    # viewer.response can be a JSON string or already a dict
-    viewer = settings.get("viewer", {})
-    response = viewer.get("response", {})
-    if isinstance(response, str):
-        try:
+        response = settings["viewer"]["response"]
+        if isinstance(response, str):
             response = json.loads(response)
-        except json.JSONDecodeError:
-            return []
-    scans = response.get("scans") or response.get("files") or response.get("pages") or []
-    return scans if isinstance(scans, list) else []
+        for key in ("scans", "files", "pages"):
+            scans = response.get(key)
+            if isinstance(scans, list):
+                return scans
+        raise ValueError("missing scan array")
+    except (ValueError, KeyError, TypeError, AttributeError):
+        if strict:
+            raise ValueError("invalid viewer scan data") from None
+        return []
 
 
 def _download_file(session: requests.Session, url: str, dest: Path, retries: int = 3) -> str:
@@ -275,38 +241,168 @@ def _write_metadata(dest_dir: Path, invnr: int, html: str, scans: list[dict]) ->
         json.dump(meta, f, ensure_ascii=False, indent=2)
 
 
-def _list_inventory(inv_numbers: list[int], csv_out: str | None = None) -> None:
-    """Print inventory numbers compactly, grouping consecutive ranges."""
-    if not inv_numbers:
+def _list_inventory(
+    entries: list[dict],
+    csv_out: str | None = None,
+    counts: dict[int, int | None] | None = None,
+    only_digitized: bool = False,
+) -> None:
+    """Print one row per inventory number with its kantoor and scan count."""
+    rows: list[dict] = []
+    for entry in entries:
+        n_scans = _entry_n_scans(entry, counts)
+        if only_digitized and not listing.has_scans(n_scans):
+            continue
+        rows.append(
+            {
+                "invnr": entry["invnr"],
+                "kantoor": entry.get("kantoor") or "",
+                "n_scans": listing.fmt_count(n_scans),
+            }
+        )
+
+    if not rows:
         print("  (none)")
         return
 
-    ranges: list[tuple[int, int]] = []
-    start = inv_numbers[0]
-    end = inv_numbers[0]
-    for n in inv_numbers[1:]:
-        if n == end + 1:
-            end = n
-        else:
-            ranges.append((start, end))
-            start = end = n
-    ranges.append((start, end))
-
-    print(f"\n{len(inv_numbers)} inventory numbers in {len(ranges)} range(s):\n")
-    for lo, hi in ranges:
-        if lo == hi:
-            print(f"  {lo}")
-        else:
-            print(f"  {lo}–{hi}")
+    print(f"\n{len(rows)} inventory numbers:\n")
+    print(f"  {'invnr':>6}  {'scans':>6}  kantoor")
+    print(f"  {'------':>6}  {'------':>6}  -------")
+    for row in rows:
+        print(f"  {row['invnr']:>6}  {row['n_scans']:>6}  {row['kantoor']}")
     print()
 
     if csv_out:
         with open(csv_out, "w", newline="", encoding="utf-8") as f:
-            writer = csv.writer(f)
-            writer.writerow(["invnr"])
-            for n in inv_numbers:
-                writer.writerow([n])
-        print(f"Wrote {len(inv_numbers)} rows to {csv_out}\n")
+            writer = csv.DictWriter(f, fieldnames=LIST_FIELDS)
+            writer.writeheader()
+            writer.writerows(rows)
+        print(f"Wrote {len(rows)} rows to {csv_out}\n")
+
+
+def _parse_ead_entries(xml_bytes: bytes) -> list[dict]:
+    """Parse the EAD XML into sorted ``{invnr, kantoor, has_scans}`` rows.
+
+    Covers section 2.4 only, excluding Tafel V-bis and Tafel VI subsections.
+    """
+    root = ET.fromstring(xml_bytes)
+    dsc = root.find(".//dsc")
+    if dsc is None:
+        return []
+
+    top_level = _get_children(dsc)
+    section2 = next((s for s in top_level if _get_unitid(s) == "2"), None)
+    if section2 is None:
+        return []
+
+    section24 = next((s for s in _get_children(section2) if _get_unitid(s) == "2.4"), None)
+    if section24 is None:
+        return []
+
+    by_invnr: dict[int, dict] = {}
+
+    def absorb(rows: list[dict], kantoor: str) -> None:
+        for row in rows:
+            by_invnr.setdefault(row["invnr"], {**row, "kantoor": kantoor})
+
+    for kantoor_elem in _get_children(section24):
+        kantoor = _get_unittitle(kantoor_elem) or _get_unitid(kantoor_elem)
+        subsections = _get_children(kantoor_elem)
+        if not subsections:
+            absorb(_collect_leaf_invnrs(kantoor_elem), kantoor)
+            continue
+
+        for subsec in subsections:
+            sub_title = _get_unittitle(subsec).lower()
+            if _is_excluded_subsection(sub_title):
+                continue
+
+            sub_children = _get_children(subsec)
+            if sub_children:
+                for subsub in sub_children:
+                    subsub_title = _get_unittitle(subsub).lower()
+                    if not _is_excluded_subsection(subsub_title):
+                        absorb(_collect_leaf_invnrs(subsub), kantoor)
+            else:
+                absorb(_collect_leaf_invnrs(subsec), kantoor)
+
+    return [by_invnr[n] for n in sorted(by_invnr)]
+
+
+def _fallback_entries() -> list[dict]:
+    """Return the hardcoded fallback inventory rows.
+
+    The ranges carry a kantoor but no digitization marker, so ``has_scans`` is
+    ``None`` (unknown) rather than a guess either way.
+    """
+    by_invnr: dict[int, dict] = {}
+    for lo, hi, kantoor in _FALLBACK_INVNR_RANGES:
+        for n in range(lo, hi + 1):
+            by_invnr.setdefault(n, {"invnr": n, "kantoor": kantoor, "has_scans": None})
+    return [by_invnr[n] for n in sorted(by_invnr)]
+
+
+def _collect_inventory_entries(session: requests.Session) -> list[dict]:
+    resp = session.get(EAD_XML_URL, timeout=120)
+    resp.raise_for_status()
+    entries = _parse_ead_entries(resp.content)
+    if not entries:
+        raise ValueError("no section 2.4 inventory entries in the EAD XML")
+    return entries
+
+
+def _fetch_inventory_entries(session: requests.Session, refresh_cache: bool = False) -> list[dict]:
+    """Cache full EAD entries with a key distinct from legacy integer lists.
+
+    Failed collection leaves the cache untouched; fallback rows are never cached.
+    """
+    try:
+        return regcache.load_or_collect(
+            ARCHIVE,
+            INVENTORY_CACHE_NAME,
+            lambda: _collect_inventory_entries(session),
+            key=EAD_XML_URL + "#entries-v1",
+            refresh=refresh_cache,
+        )
+    except Exception as exc:
+        print(f"  Warning: EAD XML fetch/parse failed ({exc}); using fallback list.")
+    return _fallback_entries()
+
+
+def _count_scans(session: requests.Session, invnr: int) -> int | None:
+    """Exact page count for one invnr, at the cost of one viewer page fetch.
+
+    Only reached under ``--count-scans``: the EAD says *whether* an item is
+    digitized but not how many pages it has, and the page count is embedded in
+    the (large) viewer HTML.
+    """
+    try:
+        resp = session.get(VIEWER_URL_TPL.format(invnr=invnr), timeout=60)
+        if resp.status_code == 404:
+            return 0
+        resp.raise_for_status()
+    except requests.RequestException:
+        return None
+    try:
+        return len(_extract_scans_from_viewer(resp.text, strict=True))
+    except ValueError:
+        return None
+
+
+LIST_FIELDS = ["invnr", "kantoor", "n_scans"]
+
+
+def _entry_n_scans(entry: dict, counts: dict[int, int | None] | None) -> int | None:
+    """Scan count for one inventory row.
+
+    Without ``--count-scans`` only the EAD's digitized marker is available, so
+    an undigitized item is an exact ``0`` and a digitized one an honest ``?``:
+    the page count lives in the viewer page, one HTTP fetch per invnr.
+    """
+    if counts is not None:
+        return counts.get(entry["invnr"])
+    has_scans = entry.get("has_scans")
+    return 0 if has_scans is False else None
 
 
 def main(
@@ -314,6 +410,8 @@ def main(
     list_invnrs: bool = False,
     csv_out: str | None = None,
     out_dir: Path | None = None,
+    only_digitized: bool = False,
+    count_scans: bool = False,
     workers: int = download.DEFAULT_WORKERS,
     refresh_cache: bool = False,
 ) -> RunSummary | None:
@@ -327,21 +425,43 @@ def main(
         output_dir.mkdir(parents=True, exist_ok=True)
 
         print("Fetching inventory numbers from EAD XML …")
-        inv_numbers = _fetch_inventory_numbers(session, refresh_cache=refresh_cache)
-        print(f"Found {len(inv_numbers)} inventory items: {inv_numbers[0]}–{inv_numbers[-1]}")
+        entries = _fetch_inventory_entries(session, refresh_cache=refresh_cache)
+        print(
+            f"Found {len(entries)} inventory items: "
+            f"{entries[0]['invnr']}–{entries[-1]['invnr']} "
+            f"({sum(1 for e in entries if e.get('has_scans')) or '?'} digitized)"
+        )
 
         if invnrs is not None:
-            inv_numbers = [n for n in inv_numbers if str(n) in invnrs]
-            print(f"Filtered to {len(inv_numbers)} inventory numbers matching --invnr.")
-            if not inv_numbers:
-                print(
-                    f"\nWARNING: {filters.describe(invnrs)} matched no "
-                    "inventarisnummer in access 3.06.05."
-                )
+            entries = [e for e in entries if str(e["invnr"]) in invnrs]
+            print(f"Filtered to {len(entries)} inventory numbers matching --invnr.")
+
+        if invnrs is not None and not entries:
+            print(
+                f"\nWARNING: {filters.describe(invnrs)} matched no "
+                "inventarisnummer in access 3.06.05."
+            )
 
         if list_invnrs:
-            _list_inventory(inv_numbers, csv_out=csv_out)
+            counts: dict[int, int | None] | None = None
+            if count_scans:
+                wanted = [e for e in entries if e.get("has_scans") is not False]
+                print(f"Fetching viewer pages to count scans for {len(wanted)} items …")
+                counts = {e["invnr"]: 0 for e in entries}
+                for entry in wanted:
+                    counts[entry["invnr"]] = _count_scans(session, entry["invnr"])
+                    time.sleep(0.5)
+            _list_inventory(entries, csv_out=csv_out, counts=counts, only_digitized=only_digitized)
             return
+
+        if only_digitized:
+            # The EAD's <dao> markers make this free: 721 of the 3,958 items have
+            # no scans, and each one would otherwise cost a viewer page fetch.
+            kept = [e for e in entries if e.get("has_scans") is not False]
+            print(f"--only-digitized: {len(kept)} of {len(entries)} inventory numbers have scans.")
+            entries = kept
+
+        inv_numbers = [e["invnr"] for e in entries]
 
         # Access 3.06.05 is a flat run of inventarisnummers: no kantoor layer.
         summary = RunSummary(ARCHIVE, "Zuid-Holland (Nationaal Archief)", unit_name=None)
@@ -374,7 +494,7 @@ def main(
 
             scans = _extract_scans_from_viewer(html)
             if not scans:
-                print("no scans found")
+                print(f"0 scans{listing.NOTHING_TO_DOWNLOAD}")
                 with open(done_file, "a") as f:
                     f.write(key + "\n")
                 time.sleep(0.5)
