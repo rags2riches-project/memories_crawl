@@ -89,7 +89,8 @@ uv run memories-crawl drentsarchief --list-invnrs
 For the API-backed archives (Drenthe, BHIC, Friesland) and for archives with a cached
 inventory (Limburg, Gelderland, Zeeland), this runs in about a second without launching a
 browser. For the others (Overijssel, Utrecht, Noord-Holland), it needs the Playwright
-token-harvest pass first — but cached tokens are reused on reruns.
+token-harvest pass first — but cached tokens are reused on reruns, as long as the later
+run uses the same `--out-dir`.
 
 ### `--csv` — export listing to a spreadsheet
 
@@ -137,6 +138,22 @@ The filter is applied as early as possible: for archives with cached inventory i
 happens before the slow Playwright token-harvest phase; for the rest it happens after
 token harvest but before downloading. Only matching invnrs are processed.
 
+### `--out-dir` — choose where everything lands
+
+By default scans and caches are written below `./scans`, relative to the directory
+you run the command from. `--out-dir` makes that root explicit:
+
+```bash
+uv run memories-crawl gelderland --out-dir /mnt/data/mvs
+```
+
+`$MEMORIES_CRAWL_OUT_DIR` sets the same root if you would rather not repeat the flag.
+
+**Use the same `--out-dir` for every invocation of an archive.** The inventory and
+Playwright token caches live below the output root, so a `--list-invnrs` pass and a
+download pass run with different roots cannot see each other's caches, and the token
+harvest — by far the slowest part of the MAIS pipelines — silently runs twice.
+
 ---
 
 ## Pipelines in detail
@@ -156,8 +173,8 @@ Uses Tresoar's **Memorix genealogy REST API** via the AlleFriezen tenant key
 
 Tafel V-bis is not present at Tresoar (0 results for "tafel" or "v-bis").
 
-Progress is tracked in `friesland_progress.csv` (per-register). Existing per-person directories (with `metadata.json`) are skipped on reruns.
-Output: `scans/friesland/{kantoor}/{invnr}/{person_slug}/`.
+Progress is tracked in `<out-dir>/.cache/friesland/friesland_progress.csv` (per-register). Existing per-person directories (with `metadata.json`) are skipped on reruns.
+Output: `<out-dir>/friesland/{kantoor}/{invnr}/{person_slug}/`.
 
 ---
 
@@ -182,7 +199,7 @@ https://preserve2.archieven.nl/mi-37/fonc-gea/{code}/{invnr}/
 
 The full-resolution JP2 is only reachable via IIPSrv tile-server requests; `format=large` is the practical maximum.
 
-Inventory and token caches (`inventory_{code}.json`, `tokens_{code}.json` with partial saves every 25 invnrs) skip Playwright on reruns. Already-downloaded kantoren are tracked in `scans/gelderland/done.txt`.
+Inventory and token caches (`inventory_{code}.json`, `tokens_{code}.json` with partial saves every 25 invnrs) skip Playwright on reruns. Already-downloaded kantoren are tracked in `<out-dir>/.cache/gelderland/done.txt`.
 
 **First-time setup**: run `uv run playwright install chromium` after `uv sync`.
 
@@ -198,8 +215,8 @@ Access number **3.06.05**. The pipeline:
 2. For each inventory number, loads the viewer page and extracts scan UUIDs from the embedded `drupal-settings-json` data block.
 3. Downloads full-size scans from `service.archief.nl/api/file/v1/default/{UUID}`.
 
-Progress is tracked in `nationaalarchief_done.txt` so interrupted runs can be resumed.
-Output: `scans/nationaalarchief/{invnr}/`.
+Progress is tracked in `<out-dir>/.cache/nationaalarchief/nationaalarchief_done.txt` so interrupted runs can be resumed.
+Output: `<out-dir>/nationaalarchief/{invnr}/`.
 
 ---
 
@@ -220,8 +237,9 @@ Uses the **Memorix genealogy REST API** at `webservices.memorix.nl/genealogy`
    `asset[].download`, so no per-deed detail request is needed.
 3. Downloads all `asset[].download` URLs (full-size JPEGs).
 
-Progress is tracked in `drentsarchief_deeds.csv`, flushed after every deed.
-Output: `scans/drentsarchief/{deed_id}/`.
+Progress is tracked in `<out-dir>/.cache/drentsarchief/drentsarchief_deeds.csv`, flushed
+after every deed.
+Output: `<out-dir>/drentsarchief/{deed_id}/`.
 
 ---
 
@@ -243,7 +261,7 @@ Tafel V-bis is not indexed at BHIC, but a defensive filter skips any record
 whose name/type still contains "tafel" or "v-bis".
 
 Progress is tracked in `bhic_progress.csv`.
-Output: `scans/bhic/{gemeente}/deel_{invnr}/`.
+Output: `<out-dir>/bhic/{gemeente}/deel_{invnr}/`.
 
 ---
 
@@ -265,7 +283,7 @@ The pipeline uses **Playwright/Chromium** to:
 2. For each digitized invnr: navigate to the inv2 page (strip auto-loads), click "Volgende" until all pages are loaded, harvest per-page tokens from `<img src>` attributes.
 3. Download full-size PNG scans (`format=large`, 714x1024).
 
-Inventory and token caches (`scans/limburg/inventory_{code}.json`, `scans/limburg/tokens_{code}_{invnr}.json`) skip the slow Playwright pass on reruns.
+Inventory and token caches (`<out-dir>/.cache/limburg/inventory_{code}.json`, `<out-dir>/.cache/limburg/tokens_{code}_{invnr}.json`) skip the slow Playwright pass on reruns.
 
 **First-time setup**: run `uv run playwright install chromium` after `uv sync`.
 
@@ -285,7 +303,7 @@ The pipeline uses **Playwright/Chromium** to drive a headless browser:
 3. Harvests per-page tokens from the rendered `<img src>` attributes.
 4. Downloads full-size scans using those tokens.
 
-Token results are cached per-kantoor in `scans/overijssel/tokens_minr_{minr}.json` so the Playwright pass does not need to repeat on reruns.
+Token results are cached per-kantoor in `<out-dir>/.cache/overijssel/tokens_minr_{minr}.json` so the Playwright pass does not need to repeat on reruns.
 
 **First-time setup**: run `uv run playwright install chromium` after `uv sync`.
 
@@ -309,7 +327,7 @@ The HUA also uses a MAIS Internet viewer (`miadt=39`, `mivast=39`). The pipeline
 
 Unlike Overijssel, each kantoor has a different archive code (`micode`, e.g. `337-2` for Amersfoort, `337-7` for Utrecht), and subsection minr values are discovered dynamically rather than being hardcoded.
 
-Token results are cached per subsection in `scans/utrechtsarchief/tokens_{micode}_{minr}.json`. Partial results are saved every 25 items for crash resilience. Already-downloaded inventarisnummers are tracked in `scans/utrechtsarchief/done_{kantoor}.txt`.
+Token results are cached per subsection in `<out-dir>/.cache/utrechtsarchief/tokens_{micode}_{minr}.json`. Partial results are saved every 25 items for crash resilience. Already-downloaded inventarisnummers are tracked in `<out-dir>/.cache/utrechtsarchief/done_{kantoor}.txt`.
 
 **First-time setup**: run `uv run playwright install chromium` after `uv sync`.
 
@@ -329,7 +347,7 @@ Uses the **MAIS Internet viewer** (`miadt=236`, `mivast=236`, archive code 178) 
 3. For each MvS period minr: navigates to the inv3 page, collects all stk3 child items, toggles each one to force-load the thumbnail strip, harvests per-page tokens from `<img src>` attributes.
 4. Converts thumbnail URLs to full-size (removes `?format=thumb`) and downloads.
 
-Token results are cached per period minr in `scans/noordholland/tokens_{minr}.json` with partial saves for crash resilience. Already-downloaded kantoren are tracked in `scans/noordholland/done.txt`.
+Token results are cached per period minr in `<out-dir>/.cache/noordholland/tokens_{minr}.json` with partial saves for crash resilience. Already-downloaded kantoren are tracked in `<out-dir>/.cache/noordholland/done.txt`.
 
 **First-time setup**: run `uv run playwright install chromium` after `uv sync`.
 
@@ -348,7 +366,7 @@ Uses the **MAIS Internet viewer** (`miadt=239`, `mivast=239`) on the `zeeuwsarch
 4. Force-loads all strip chunks and harvests per-page tokens from `<img src>` attributes.
 5. Derives full-size URLs by stripping `?format=thumb` from thumbnail URLs and downloads scans.
 
-Token results are cached per kantoor in `scans/zeeland/tokens_minr_{minr}.json` with partial saves for crash resilience. Already-downloaded kantoren are tracked in `scans/zeeland/done.txt`.
+Token results are cached per kantoor in `<out-dir>/.cache/zeeland/tokens_minr_{minr}.json` with partial saves for crash resilience. Already-downloaded kantoren are tracked in `<out-dir>/.cache/zeeland/done.txt`.
 
 **First-time setup**: run `uv run playwright install chromium` after `uv sync`.
 
@@ -356,8 +374,10 @@ Token results are cached per kantoor in `scans/zeeland/tokens_minr_{minr}.json` 
 
 ## Output structure
 
+Scans go below the output root (`./scans` unless `--out-dir` says otherwise):
+
 ```
-scans/
+<out-dir>/
 ├── friesland/{kantoor}/{invnr}/{person_slug}/
 │   ├── metadata.json
 │   └── 0001.jp2 …
@@ -386,10 +406,21 @@ scans/
 ├── noordholland/{kantoor}/{invnr:04d}/
 │   ├── metadata.json
 │   └── 0001.jpg …
-└── zeeland/{kantoor}/{invnr}/
-    ├── metadata.json
-    └── 0000.jpg …
+├── zeeland/{kantoor}/{invnr}/
+│   ├── metadata.json
+│   └── 0000.jpg …
+└── .cache/{archive}/
+    ├── inventory_{code}.json     – discovered inventarisnummers
+    ├── tokens_*.json             – harvested Playwright tokens
+    ├── done.txt                  – resume markers
+    └── {archive}_progress.csv    – per-register progress
 ```
+
+`.cache/` is deliberately kept out of the per-archive scan directories, so the images
+can be moved or deleted without discarding a token harvest that took a quarter of an
+hour to produce. Caches written by memories-crawl ≤ 0.2 sat mixed in with the images
+(`scans/{archive}/tokens_*.json`); those are still found and updated in place, so
+upgrading never forces a re-harvest.
 
 ## Metadata JSON format
 
@@ -417,13 +448,13 @@ Fields vary by archive depending on what metadata is available in the source sys
 
 All pipelines are designed to be safely restarted:
 
-- **Friesland**: tracks completed registers in `friesland_progress.csv` (rows with `status=done` are skipped); existing per-person directories (with `metadata.json`) are skipped on reruns.
-- **Gelderland**: inventory and token cache files (`inventory_{code}.json`, `tokens_{code}.json` with partial saves every 25 invnrs) skip the slow Playwright pass; already-downloaded images are skipped by file existence check. Completed kantoren are tracked in `scans/gelderland/done.txt`.
-- **Nationaal Archief**: tracks completed inventory numbers in `nationaalarchief_done.txt`.
-- **Drents Archief**: tracks completed deeds in `drentsarchief_deeds.csv` (rows with `status=done` are skipped), written after every deed so an interrupted run keeps its progress; scans are downloaded to a `.part` file and renamed on completion, so a truncated file is never mistaken for a finished one.
-- **BHIC**: tracks completed registers in `bhic_progress.csv` (rows with `status=done` are skipped); already-downloaded scans are skipped by file existence check.
+- **Friesland**: tracks completed registers in `<out-dir>/.cache/friesland/friesland_progress.csv` (rows with `status=done` are skipped); existing per-person directories (with `metadata.json`) are skipped on reruns.
+- **Gelderland**: inventory and token cache files (`inventory_{code}.json`, `tokens_{code}.json` with partial saves every 25 invnrs) skip the slow Playwright pass; already-downloaded images are skipped by file existence check. Completed kantoren are tracked in `<out-dir>/.cache/gelderland/done.txt`.
+- **Nationaal Archief**: tracks completed inventory numbers in `<out-dir>/.cache/nationaalarchief/nationaalarchief_done.txt`.
+- **Drents Archief**: tracks completed deeds in `<out-dir>/.cache/drentsarchief/drentsarchief_deeds.csv` (rows with `status=done` are skipped), written after every deed so an interrupted run keeps its progress; scans are downloaded to a `.part` file and renamed on completion, so a truncated file is never mistaken for a finished one.
+- **BHIC**: tracks completed registers in `<out-dir>/.cache/bhic/bhic_progress.csv` (rows with `status=done` are skipped); already-downloaded scans are skipped by file existence check.
 - **Overijssel**: token cache files (`tokens_minr_*.json`) skip the slow Playwright pass; already-downloaded images are skipped by file existence check.
 - **Limburg**: inventory and token cache files (`inventory_{code}.json`, `tokens_{code}_{invnr}.json`) skip the slow Playwright pass; already-downloaded images are skipped by file existence check.
 - **Utrechts Archief**: token cache files (`tokens_{micode}_{minr}.json`, with partial saves every 25 items for crash resilience) skip the slow Playwright pass; already-downloaded images are skipped by file existence check. Completed inventarisnummers are tracked in `done_{kantoor}.txt` per kantoor.
-- **Noord-Holland**: token cache files (`tokens_{minr}.json`, with partial saves for crash resilience) skip the slow Playwright pass; already-downloaded images are skipped by file existence check. Completed kantoren are tracked in `scans/noordholland/done.txt`.
-- **Zeeland**: token cache files (`tokens_minr_{minr}.json`, with partial saves for crash resilience) skip the slow Playwright pass; already-downloaded images are skipped by file existence check. Completed kantoren are tracked in `scans/zeeland/done.txt`.
+- **Noord-Holland**: token cache files (`tokens_{minr}.json`, with partial saves for crash resilience) skip the slow Playwright pass; already-downloaded images are skipped by file existence check. Completed kantoren are tracked in `<out-dir>/.cache/noordholland/done.txt`.
+- **Zeeland**: token cache files (`tokens_minr_{minr}.json`, with partial saves for crash resilience) skip the slow Playwright pass; already-downloaded images are skipped by file existence check. Completed kantoren are tracked in `<out-dir>/.cache/zeeland/done.txt`.

@@ -14,7 +14,7 @@ Pipeline
 
 Folder layout
 ─────────────
-  scans/friesland/{kantoor}/{invnr}/{person_slug}/
+  <out-dir>/friesland/{kantoor}/{invnr}/{person_slug}/
       {NNNN}.jp2               – sequentially numbered scan pages
       metadata.json            – per-person info (name, date of death, …)
 
@@ -38,12 +38,14 @@ from pathlib import Path
 
 import requests
 
+from memories_crawl import paths
+
 API_BASE = "https://webservices.memorix.nl/genealogy"
 API_KEY = "aa030ec4-12d0-4dc0-afaf-b65fd6128b39"
 REGISTER_FILTER = 'search_s_type_title:"Memories van successie"'
 PAGE_SIZE = 100
-OUTPUT_DIR = Path("scans/friesland")
-PROGRESS_CSV = Path("friesland_progress.csv")
+ARCHIVE = "friesland"
+PROGRESS_CSV_NAME = "friesland_progress.csv"
 USER_AGENT = "memories-crawl/1.0"
 
 ARCHIVE_NAME = "Tresoar"
@@ -193,10 +195,15 @@ def _download_file(session: requests.Session, url: str, dest: Path, retries: int
     return "failed"
 
 
+def _progress_csv() -> Path:
+    return paths.cache_file(ARCHIVE, PROGRESS_CSV_NAME, legacy=Path(PROGRESS_CSV_NAME))
+
+
 def _load_done() -> set[str]:
     done: set[str] = set()
-    if PROGRESS_CSV.exists():
-        with open(PROGRESS_CSV, newline="", encoding="utf-8") as f:
+    progress_csv = _progress_csv()
+    if progress_csv.exists():
+        with open(progress_csv, newline="", encoding="utf-8") as f:
             for row in csv.DictReader(f):
                 if row.get("status") == "done":
                     done.add(row["register_id"])
@@ -232,10 +239,17 @@ def _list_registers(registers: list[dict], csv_out: str | None = None) -> None:
 
 
 def main(
-    invnrs: set[str] | None = None, list_invnrs: bool = False, csv_out: str | None = None
+    invnrs: set[str] | None = None,
+    list_invnrs: bool = False,
+    csv_out: str | None = None,
+    out_dir: Path | None = None,
 ) -> None:
+    if out_dir is not None:
+        paths.set_out_dir(out_dir)
+    output_dir = paths.archive_dir(ARCHIVE)
+
     session = _session()
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    output_dir.mkdir(parents=True, exist_ok=True)
 
     print("Collecting Tresoar Memorie van Successie registers …")
     registers = _paginate(session, "/register", REGISTER_FILTER, "register")
@@ -252,8 +266,9 @@ def main(
         return
 
     done = _load_done()
-    write_header = not PROGRESS_CSV.exists() or PROGRESS_CSV.stat().st_size == 0
-    with open(PROGRESS_CSV, "a", newline="", encoding="utf-8") as progress:
+    progress_csv = _progress_csv()
+    write_header = not progress_csv.exists() or progress_csv.stat().st_size == 0
+    with open(progress_csv, "a", newline="", encoding="utf-8") as progress:
         writer = csv.DictWriter(
             progress,
             fieldnames=["register_id", "kantoor", "invnr", "status", "n_persons"],
@@ -310,7 +325,7 @@ def main(
                     continue
 
                 slug = _person_slug(person)
-                dest_dir = OUTPUT_DIR / _sanitize(kantoor) / _sanitize(invnr) / slug
+                dest_dir = output_dir / _sanitize(kantoor) / _sanitize(invnr) / slug
 
                 # Download scan pages from the deed's embedded assets.
                 assets = deed.get("asset") or []

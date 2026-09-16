@@ -47,6 +47,8 @@ from pathlib import Path
 
 import requests
 
+from memories_crawl import paths
+
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
@@ -55,7 +57,7 @@ ARCHIVE_NAME = "Zeeuws Archief"
 ARCHIVE_NUMBER = "398"
 MAIS_ADT = "239"
 MAIS_VAST = "239"
-OUTPUT_DIR = Path("scans/zeeland")
+ARCHIVE = "zeeland"
 USER_AGENT = "memories-crawl/1.0"
 
 # ---------------------------------------------------------------------------
@@ -239,11 +241,11 @@ def _fullsize_url(thumb_url: str) -> str:
 
 
 def _token_cache_path(kantoor_minr: int) -> Path:
-    return OUTPUT_DIR / f"tokens_minr_{kantoor_minr}.json"
+    return paths.cache_file(ARCHIVE, f"tokens_minr_{kantoor_minr}.json")
 
 
 def _partial_cache_path(kantoor_minr: int) -> Path:
-    return OUTPUT_DIR / f"tokens_minr_{kantoor_minr}_partial.json"
+    return paths.cache_file(ARCHIVE, f"tokens_minr_{kantoor_minr}_partial.json")
 
 
 def _load_cached_tokens(kantoor_minr: int) -> list[dict] | None:
@@ -301,9 +303,9 @@ _BROWSER_UA = (
 def _discover_kantoren() -> list[dict]:
     """Discover kantoor entries from the inv2 page.
 
-    Returns [{name: str, minr: int}, ...].  Caches in scans/zeeland/kantoren.json.
+    Returns [{name: str, minr: int}, ...], cached in the zeeland cache dir.
     """
-    cache_path = OUTPUT_DIR / "kantoren.json"
+    cache_path = paths.cache_file(ARCHIVE, "kantoren.json")
     if cache_path.exists():
         try:
             with open(cache_path, encoding="utf-8") as f:
@@ -514,12 +516,19 @@ def _write_metadata(
 
 
 def main(
-    invnrs: set[str] | None = None, list_invnrs: bool = False, csv_out: str | None = None
+    invnrs: set[str] | None = None,
+    list_invnrs: bool = False,
+    csv_out: str | None = None,
+    out_dir: Path | None = None,
 ) -> None:
+    if out_dir is not None:
+        paths.set_out_dir(out_dir)
+    output_dir = paths.archive_dir(ARCHIVE)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
     session = requests.Session()
     session.headers["User-Agent"] = USER_AGENT
     session.headers["Referer"] = "https://www.zeeuwsarchief.nl/"
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
     # Phase 1: Discover kantoren
     print("Discovering kantoren …")
@@ -539,7 +548,7 @@ def main(
     # would make every later run skip the rest of the kantoor.
     filtered = invnrs is not None
 
-    done_file = OUTPUT_DIR / "done.txt"
+    done_file = paths.cache_file(ARCHIVE, "done.txt")
     done: set[str] = set()
     if done_file.exists() and not filtered:
         done = set(done_file.read_text().splitlines())
@@ -627,7 +636,7 @@ def main(
         for invnr, inv_pages in sorted(invnr_pages.items()):
             inv_text = invnr_texts.get(invnr, "")
             safe_kantoor = kantoor.replace(". ", "_").replace(" ", "_")[:60]
-            dest_dir = OUTPUT_DIR / safe_kantoor / str(invnr)
+            dest_dir = output_dir / safe_kantoor / str(invnr)
             print(f"  invnr {invnr} ({inv_text[:40].strip()}) …", end=" ", flush=True)
 
             _write_metadata(dest_dir, kantoor, invnr, inv_text, len(inv_pages))

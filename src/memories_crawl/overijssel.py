@@ -41,12 +41,14 @@ from pathlib import Path
 
 import requests
 
+from memories_crawl import paths
+
 ARCHIVE_NAME = "Historisch Centrum Overijssel"
 ARCHIVE_NUMBER = "0136.4"
 MAIS_ADT = "141"
 MAIS_VAST = "20"
 IMAGE_BASE = "https://preserve2.archieven.nl/mi-20/fonc-hco/0136.4"
-OUTPUT_DIR = Path("scans/overijssel")
+ARCHIVE = "overijssel"
 USER_AGENT = "memories-crawl/1.0"
 
 # minr values for each kantoor's "Memories van Successie" item in the MAIS tree.
@@ -146,7 +148,7 @@ def _parse_thumb_src(src: str) -> dict | None:
 
 def _get_token_cache_path(minr: int) -> Path:
     """Return path to the token cache file for a given minr."""
-    return OUTPUT_DIR / f"tokens_minr_{minr}.json"
+    return paths.cache_file(ARCHIVE, f"tokens_minr_{minr}.json")
 
 
 def _load_cached_tokens(minr: int) -> list[dict] | None:
@@ -297,11 +299,18 @@ def _write_metadata(dest_dir: Path, kantoor: str, invnr: int, n_scans: int) -> N
 
 
 def main(
-    invnrs: set[str] | None = None, list_invnrs: bool = False, csv_out: str | None = None
+    invnrs: set[str] | None = None,
+    list_invnrs: bool = False,
+    csv_out: str | None = None,
+    out_dir: Path | None = None,
 ) -> None:
+    if out_dir is not None:
+        paths.set_out_dir(out_dir)
+    output_dir = paths.archive_dir(ARCHIVE)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
     session = requests.Session()
     session.headers["User-Agent"] = USER_AGENT
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
     csv_rows: list[dict] = []
 
@@ -342,7 +351,7 @@ def main(
         skipped = 0
         missing = 0
         for invnr, inv_pages in sorted(invnr_pages.items()):
-            dest_dir = OUTPUT_DIR / kantoor / str(invnr)
+            dest_dir = output_dir / kantoor / str(invnr)
             _write_metadata(dest_dir, kantoor, invnr, len(inv_pages))
             for p in inv_pages:
                 dest = dest_dir / f"{p['page']:04d}.jpg"

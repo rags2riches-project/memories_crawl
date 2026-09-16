@@ -60,6 +60,8 @@ from pathlib import Path
 
 import requests
 
+from memories_crawl import paths
+
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
@@ -71,7 +73,7 @@ IMAGE_BASE = "https://preserve3.archieven.nl/mi-0/fonc-rhcl"
 IMAGE_FORMAT = "large"  # 714 × 1024 PNG; see module docstring
 USER_AGENT = "memories-crawl/1.0"
 
-OUTPUT_DIR = Path("scans/limburg")
+ARCHIVE = "limburg"
 
 # Each archive code's behaviour in the MAIS tree.
 #   parent_minr: if not None, we drill into this sub-section's children rather
@@ -230,11 +232,11 @@ def _split_title(raw_title: str, axis: str) -> tuple[str, str]:
 
 
 def _inventory_cache_path(code: str) -> Path:
-    return OUTPUT_DIR / f"inventory_{code}.json"
+    return paths.cache_file(ARCHIVE, f"inventory_{code}.json")
 
 
 def _tokens_cache_path(code: str, invnr: int) -> Path:
-    return OUTPUT_DIR / f"tokens_{code}_{invnr}.json"
+    return paths.cache_file(ARCHIVE, f"tokens_{code}_{invnr}.json")
 
 
 def _load_json(path: Path) -> object | None:
@@ -262,7 +264,7 @@ def _harvest_inventory(code: str) -> list[dict]:
     """Return every digitized inventarisnummer for ``code``.
 
     Each record is ``{invnr, title, minr, hasScan, name, datering}``.
-    Results are cached in ``OUTPUT_DIR/inventory_<code>.json``.
+    Results are cached in ``<out-dir>/.cache/limburg/inventory_<code>.json``.
     """
     cached = _load_json(_inventory_cache_path(code))
     if isinstance(cached, list) and cached:
@@ -444,9 +446,16 @@ def _write_metadata(dest_dir: Path, code: str, item: dict, n_scans: int) -> None
 
 
 def main(
-    invnrs: set[str] | None = None, list_invnrs: bool = False, csv_out: str | None = None
+    invnrs: set[str] | None = None,
+    list_invnrs: bool = False,
+    csv_out: str | None = None,
+    out_dir: Path | None = None,
 ) -> None:
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    if out_dir is not None:
+        paths.set_out_dir(out_dir)
+    output_dir = paths.archive_dir(ARCHIVE)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
     session = requests.Session()
     session.headers["User-Agent"] = USER_AGENT
     session.headers["Referer"] = "https://www.archieven.nl/"
@@ -535,7 +544,7 @@ def main(
         totals = {"downloaded": 0, "exists": 0, "missing": 0}
         for it in items:
             tokens = _load_json(_tokens_cache_path(code, it["invnr"])) or []
-            dest_dir = OUTPUT_DIR / code / str(it["invnr"])
+            dest_dir = output_dir / code / str(it["invnr"])
             _write_metadata(dest_dir, code, it, len(tokens))
             for tok in tokens:
                 url = _image_url(code, tok)

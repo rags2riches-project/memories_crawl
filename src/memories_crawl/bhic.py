@@ -20,7 +20,7 @@ Pipeline
 
 Folder layout
 ─────────────
-  scans/bhic/{gemeente}/deel_{invnr}/
+  <out-dir>/bhic/{gemeente}/deel_{invnr}/
       {asset_name}.jpg           – e.g. BergenopZoom_044_0001.jpg
       metadata.json              – register-level info
       deeds.json                 – list of all deeds + persons in this register
@@ -41,12 +41,14 @@ from pathlib import Path
 
 import requests
 
+from memories_crawl import paths
+
 API_BASE = "https://webservices.memorix.nl/genealogy"
 API_KEY = "24c66d08-da4a-4d60-917f-5942681dcaa1"
 REGISTER_FILTER = 'search_s_type_title:"memorie van successie"'
 PAGE_SIZE = 100
-OUTPUT_DIR = Path("scans/bhic")
-PROGRESS_CSV = Path("bhic_progress.csv")
+ARCHIVE = "bhic"
+PROGRESS_CSV_NAME = "bhic_progress.csv"
 USER_AGENT = "memories-crawl/1.0"
 
 ARCHIVE_NAME = "Brabants Historisch Informatie Centrum"
@@ -117,12 +119,16 @@ def _sanitize(name: str) -> str:
     return cleaned.rstrip(". ") or "unknown"
 
 
+def _progress_csv() -> Path:
+    return paths.cache_file(ARCHIVE, PROGRESS_CSV_NAME, legacy=Path(PROGRESS_CSV_NAME))
+
+
 def _register_dir(register: dict) -> Path:
-    """Return scans/bhic/{gemeente}/deel_{invnr}/ for a register."""
+    """Return <out-dir>/bhic/{gemeente}/deel_{invnr}/ for a register."""
     md = register.get("metadata") or {}
     gemeente = _sanitize(md.get("gemeente") or "onbekend")
     invnr = _sanitize(md.get("inventarisnummer") or register.get("id", "unknown"))
-    return OUTPUT_DIR / gemeente / f"deel_{invnr}"
+    return paths.archive_dir(ARCHIVE) / gemeente / f"deel_{invnr}"
 
 
 def _write_register_metadata(dest_dir: Path, register: dict) -> None:
@@ -234,8 +240,9 @@ def _download_file(session: requests.Session, url: str, dest: Path, retries: int
 
 def _load_done() -> set[str]:
     done: set[str] = set()
-    if PROGRESS_CSV.exists():
-        with open(PROGRESS_CSV, newline="", encoding="utf-8") as f:
+    progress_csv = _progress_csv()
+    if progress_csv.exists():
+        with open(progress_csv, newline="", encoding="utf-8") as f:
             for row in csv.DictReader(f):
                 if row.get("status") == "done":
                     done.add(row["register_id"])
@@ -271,10 +278,16 @@ def _list_registers(registers: list[dict], csv_out: str | None = None) -> None:
 
 
 def main(
-    invnrs: set[str] | None = None, list_invnrs: bool = False, csv_out: str | None = None
+    invnrs: set[str] | None = None,
+    list_invnrs: bool = False,
+    csv_out: str | None = None,
+    out_dir: Path | None = None,
 ) -> None:
+    if out_dir is not None:
+        paths.set_out_dir(out_dir)
+    paths.archive_dir(ARCHIVE).mkdir(parents=True, exist_ok=True)
+
     session = _session()
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
     print("Collecting BHIC Memorie van Successie registers …")
     registers = _paginate(session, "/register", REGISTER_FILTER, "register")
@@ -291,8 +304,9 @@ def main(
         return
 
     done = _load_done()
-    write_header = not PROGRESS_CSV.exists() or PROGRESS_CSV.stat().st_size == 0
-    with open(PROGRESS_CSV, "a", newline="", encoding="utf-8") as progress:
+    progress_csv = _progress_csv()
+    write_header = not progress_csv.exists() or progress_csv.stat().st_size == 0
+    with open(progress_csv, "a", newline="", encoding="utf-8") as progress:
         writer = csv.DictWriter(
             progress, fieldnames=["register_id", "gemeente", "invnr", "status", "n_scans"]
         )

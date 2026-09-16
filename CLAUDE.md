@@ -20,11 +20,30 @@ uv run memories-crawl gelderland         # Gelderland (Gelders Archief) – requ
 uv run memories-crawl all
 ```
 
+## Output root
+
+Everything is written below `--out-dir` (default `./scans`, overridable with
+`$MEMORIES_CRAWL_OUT_DIR`), resolved by `src/memories_crawl/paths.py`:
+
+* scans → `<out-dir>/{archive}/…`
+* caches that make reruns cheap (inventory listings, Playwright token harvests,
+  `done.txt` resume markers, progress CSVs) → `<out-dir>/.cache/{archive}/`
+
+Pipelines must not hardcode `Path("scans/…")`. Use `paths.archive_dir(ARCHIVE)`
+for scan directories and `paths.cache_file(ARCHIVE, name)` for caches; the latter
+keeps using a cache that already exists at its pre-0.3 location
+(`<out-dir>/{archive}/{name}`, or the working directory for the progress CSVs), so
+an upgrade never silently repeats a token harvest.
+
+Every pipeline's `main()` takes `out_dir: Path | None = None` and calls
+`paths.set_out_dir(out_dir)` when it is given; the CLI sets it once up front.
+
 ## File map
 
 | File | Purpose |
 |---|---|
 | `src/memories_crawl/cli.py` | CLI dispatcher |
+| `src/memories_crawl/paths.py` | Output root, per-archive scan dirs and cache paths |
 | `src/memories_crawl/nationaalarchief.py` | Zuid-Holland: scrape viewer pages, download via UUID |
 | `src/memories_crawl/drentsarchief.py` | Drenthe: Memorix REST API, deed→asset chain |
 | `src/memories_crawl/bhic.py` | Noord-Brabant (BHIC): Memorix REST API, register→asset chain |
@@ -83,10 +102,10 @@ Each pipeline was live-tested against the real APIs and servers.
 
 | Pipeline | API/Server | End-to-end | Notes |
 |---|---|---|---|
-| **friesland** | ✅ | ⚠️ not yet tested | Tresoar / AlleFriezen Memorix REST API. 1,107 registers, ~238k persons. Deed-level assets with .jp2 downloads. Person→deed join via deed_id. Output: scans/friesland/{kantoor}/{invnr}/{person}/. |
+| **friesland** | ✅ | ⚠️ not yet tested | Tresoar / AlleFriezen Memorix REST API. 1,107 registers, ~238k persons. Deed-level assets with .jp2 downloads. Person→deed join via deed_id. Output: <out-dir>/friesland/{kantoor}/{invnr}/{person}/. |
 | **nationaalarchief** | ✅ | ✅ | 70 scans downloaded from invnr 2276 in 60s (174 MB). EAD XML parses correctly, drupal-settings-json extraction works, `service.archief.nl` download works. |
 | **drentsarchief** | ✅ | ✅ verified | Register-driven: one `/register` request (557 registers) resolves the whole inventory, then deeds/persons are paged per register. `--list-invnrs` runs in ~1 s; `--invnr` touches only matching registers. Smoke-tested 2026-09-16: Coevorden invnr 1 → 176 deeds, ~6 MB/scan. |
-| **overijssel** | ✅ | ⚠️ slow first run | Playwright + Chromium work. Almelo has 256 stk3 items → ~1825 pages of tokens; collecting tokens takes ~6 min per kantoor. Token results are cached in `scans/overijssel/tokens_minr_{minr}.json` — reruns skip Playwright entirely. |
+| **overijssel** | ✅ | ⚠️ slow first run | Playwright + Chromium work. Almelo has 256 stk3 items → ~1825 pages of tokens; collecting tokens takes ~6 min per kantoor. Token results are cached in `<out-dir>/.cache/overijssel/tokens_minr_{minr}.json` — reruns skip Playwright entirely. |
 | **utrechtsarchief** | ✅ | ⚠️ slow first run | Playwright + Chromium. Uses stk3 inline toggle (same approach as Overijssel). Amersfoort verified: 66,615 pages from 211 invnrs across 2 subsections (~12 min harvest). Token results cached per subsection — reruns skip Playwright. 11 kantoren configured. |
 | **limburg** | ✅ | ✅ verified | archieven.nl MAIS (miadt=38, mivast=0). Two codes: 07.D03 (1818-1900, 111 digitized of 1,314, ~104k scans, by place) and 07.D08 (1901-1927, 42 digitized of 460, ~7k scans, by kantoor). End-to-end smoke-tested: invnr 1 (Amby) → 527 pages; invnr 491 (Gennep) → 207 pages. Inventory + tokens cached per code/invnr; reruns skip Playwright. Image format is `format=large` PNG (714×1024); see module docstring for trade-off vs. IIPSrv full-res JP2 path. |
 | **noordholland** | ✅ | ⚠️ not yet tested | noord-hollandsarchief.nl MAIS (miadt=236, mivast=236, micode=178). Uses stk3 inline toggle (same approach as Overijssel/Utrecht). Kantoor sections discovered dynamically from inv2 tree. Tokens cached per section minr; reruns skip Playwright. Image server: preserve-nha.archieven.nl/mi-0/fonc-nha/178/. |
@@ -180,7 +199,7 @@ convert with `magick mogrify -format jpg *.jp2` if needed.
 ```
 Folder layout
 ─────────────
-  scans/friesland/{kantoor}/{invnr}/{person_slug}/
+  <out-dir>/friesland/{kantoor}/{invnr}/{person_slug}/
       {NNNN}.jp2           – sequentially numbered scan pages
       metadata.json        – per-person info (name, date of death, …)
 ```
@@ -188,7 +207,7 @@ Folder layout
 Kantoor is extracted from the register `naam` field (e.g. "Sneek" from
 "Memories kantoor Sneek").
 
-**Resume**: `friesland_progress.csv` tracks completed registers. Existing
+**Resume**: `<out-dir>/.cache/friesland/friesland_progress.csv` tracks completed registers. Existing
 per-person directories (with `metadata.json`) are skipped on reruns.
 
 ### Limburg (RHCL) – archieven.nl MAIS
@@ -231,8 +250,8 @@ embed-viewer HTML, so reaching full-res would require an extra viewer load
 per scan (~110 k loads). See module docstring for details.
 
 Caches:
-- ``scans/limburg/inventory_{code}.json``  – list of digitized invnrs
-- ``scans/limburg/tokens_{code}_{invnr}.json`` – per-page tokens for one register
+- ``<out-dir>/.cache/limburg/inventory_{code}.json``  – list of digitized invnrs
+- ``<out-dir>/.cache/limburg/tokens_{code}_{invnr}.json`` – per-page tokens for one register
 
 Both caches are sufficient for the download phase; rerunning skips Playwright
 entirely once they exist.
@@ -258,11 +277,11 @@ image URL:      https://preserve-nha.archieven.nl/mi-0/fonc-nha/178/{invnr}/
 Note that the preserve URL uses `mivast=0` (not 236), same pattern as Limburg.
 
 **Caches**:
-- ``scans/noordholland/sections.json`` – discovered kantoor sections
-- ``scans/noordholland/tokens_{minr}.json`` – per-page tokens for one kantoor section
-- ``scans/noordholland/tokens_{minr}_partial.json`` – incremental save (crash-resilient)
+- ``<out-dir>/.cache/noordholland/sections.json`` – discovered kantoor sections
+- ``<out-dir>/.cache/noordholland/tokens_{minr}.json`` – per-page tokens for one kantoor section
+- ``<out-dir>/.cache/noordholland/tokens_{minr}_partial.json`` – incremental save (crash-resilient)
 
-**Resume**: ``scans/noordholland/done.txt`` tracks completed kantoor sections.
+**Resume**: ``<out-dir>/.cache/noordholland/done.txt`` tracks completed kantoor sections.
 Partial token caches allow resuming interrupted harvest runs.
 
 ``done.txt`` is keyed by kantoor section, which is coarser than ``--invnr`` filters at,
@@ -315,11 +334,11 @@ scan segments within one register.
 | Zierikzee   | 33439954  | TBD              | TBD          |
 
 **Caches**:
-- ``scans/zeeland/kantoren.json`` – discovered kantoor entries with minr values
-- ``scans/zeeland/tokens_minr_{minr}.json`` – per-page tokens for one kantoor
-- ``scans/zeeland/tokens_minr_{minr}_partial.json`` – incremental save (crash-resilient)
+- ``<out-dir>/.cache/zeeland/kantoren.json`` – discovered kantoor entries with minr values
+- ``<out-dir>/.cache/zeeland/tokens_minr_{minr}.json`` – per-page tokens for one kantoor
+- ``<out-dir>/.cache/zeeland/tokens_minr_{minr}_partial.json`` – incremental save (crash-resilient)
 
-**Resume**: ``scans/zeeland/done.txt`` tracks completed kantoren.
+**Resume**: ``<out-dir>/.cache/zeeland/done.txt`` tracks completed kantoren.
 Partial token caches allow resuming interrupted harvest runs.
 
 ``done.txt`` is keyed by kantoor, which is coarser than ``--invnr`` filters at,
@@ -387,13 +406,13 @@ extra requests project-wide), so ``format=large`` is the practical maximum
 here.
 
 **Caches**:
-- ``scans/gelderland/inventory_{code}.json`` – discovered leaf invnrs for one
+- ``<out-dir>/.cache/gelderland/inventory_{code}.json`` – discovered leaf invnrs for one
   kantoor: ``[{invnr, text, minr, hasScan}, …]``
-- ``scans/gelderland/tokens_{code}.json`` – per-page tokens for one kantoor
-- ``scans/gelderland/tokens_{code}_partial.json`` – incremental save written
+- ``<out-dir>/.cache/gelderland/tokens_{code}.json`` – per-page tokens for one kantoor
+- ``<out-dir>/.cache/gelderland/tokens_{code}_partial.json`` – incremental save written
   every 25 invnrs so a crash mid-harvest doesn't lose work
 
-**Resume**: ``scans/gelderland/done.txt`` tracks completed kantoor codes.
+**Resume**: ``<out-dir>/.cache/gelderland/done.txt`` tracks completed kantoor codes.
 
 ``done.txt`` is keyed by kantoor code, which is coarser than ``--invnr`` filters at,
 so a filtered run neither reads nor writes it: ``--invnr`` runs are stateless with

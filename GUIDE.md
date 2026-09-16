@@ -38,8 +38,11 @@ For the six MAIS archives, the scripts use a tool called Playwright. It launches
 
 ## What you end up with
 
+Everything lands in one directory — `scans/` next to wherever you ran the command,
+or whatever you pass to `--out-dir`:
+
 ```
-scans/
+<out-dir>/
 ├── friesland/Sneek/1234/Pieter_Janssen_abc123/
 │   ├── metadata.json
 │   └── 0001.jp2 … 0024.jp2
@@ -51,7 +54,14 @@ scans/
 │   ├── metadata.json
 │   └── 0000.jpg … 0127.jpg
 …
+└── .cache/
+    └── gelderland/tokens_0022.json …
 ```
+
+The `.cache/` folder holds the bookkeeping that makes a second run cheap: which
+volumes exist, which ones are already done, and the hard-won image URLs from the
+browser step. Keep it alongside the scans and pass the same `--out-dir` every time,
+or that slow browser step runs again from scratch.
 
 Every folder gets a `metadata.json` sidecar with the archive name, inventory number, kantoor (tax district), name of the deceased (where available), and the original web URL. From there you can browse, search, or feed the collection into other tools.
 
