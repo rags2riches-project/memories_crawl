@@ -24,10 +24,12 @@ from pathlib import Path
 
 import requests
 
-from memories_crawl import download, paths
+from memories_crawl import download, filters, paths, regcache
+from memories_crawl.summary import PageTally, RunSummary
 
 ACCESS_NUMBER = "3.06.05"
 EAD_XML_URL = "https://www.nationaalarchief.nl/onderzoeken/archief/3.06.05/download/xml"
+INVENTORY_CACHE_NAME = "inventory.json"
 # Base URL pattern for inventory viewer pages
 VIEWER_URL_TPL = (
     "https://www.nationaalarchief.nl/onderzoeken/archief/3.06.05/invnr/@{invnr}"
@@ -170,17 +172,32 @@ def _fallback_invnrs() -> list[int]:
     return sorted(set(result))
 
 
-def _fetch_inventory_numbers(session: requests.Session) -> list[int]:
-    """Fetch the EAD XML and parse section 2.4 Memories invnrs.
+def _collect_inventory_numbers(session: requests.Session) -> list[int]:
+    """Download the EAD XML and parse section 2.4 Memories invnrs."""
+    resp = session.get(EAD_XML_URL, timeout=120)
+    resp.raise_for_status()
+    invnrs = _parse_ead_invnrs(resp.content)
+    if not invnrs:
+        raise ValueError("no section 2.4 inventory numbers in the EAD XML")
+    return invnrs
 
-    Falls back to the hardcoded list if the download or parse fails.
+
+def _fetch_inventory_numbers(session: requests.Session, refresh_cache: bool = False) -> list[int]:
+    """Return the section 2.4 Memories invnrs, downloading the EAD XML once.
+
+    The parsed listing is cached for :data:`regcache.TTL_SECONDS` so repeated
+    invocations do not re-download the inventory (issue #25).  A failed fetch
+    or parse falls back to the hardcoded list, which is deliberately *not*
+    cached: a transient outage must not pin the fallback in place for a month.
     """
     try:
-        resp = session.get(EAD_XML_URL, timeout=120)
-        resp.raise_for_status()
-        invnrs = _parse_ead_invnrs(resp.content)
-        if invnrs:
-            return invnrs
+        return regcache.load_or_collect(
+            ARCHIVE,
+            INVENTORY_CACHE_NAME,
+            lambda: _collect_inventory_numbers(session),
+            key=EAD_XML_URL,
+            refresh=refresh_cache,
+        )
     except Exception as exc:
         print(f"  Warning: EAD XML fetch/parse failed ({exc}); using fallback list.")
     return _fallback_invnrs()
@@ -298,84 +315,106 @@ def main(
     csv_out: str | None = None,
     out_dir: Path | None = None,
     workers: int = download.DEFAULT_WORKERS,
-) -> None:
+    refresh_cache: bool = False,
+) -> RunSummary | None:
     if out_dir is not None:
         paths.set_out_dir(out_dir)
     output_dir = paths.archive_dir(ARCHIVE)
 
     session = _session()
     downloader = download.Downloader(_download_file, workers=workers, session_factory=_session)
-    output_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        output_dir.mkdir(parents=True, exist_ok=True)
 
-    print("Fetching inventory numbers from EAD XML …")
-    inv_numbers = _fetch_inventory_numbers(session)
-    print(f"Found {len(inv_numbers)} inventory items: {inv_numbers[0]}–{inv_numbers[-1]}")
+        print("Fetching inventory numbers from EAD XML …")
+        inv_numbers = _fetch_inventory_numbers(session, refresh_cache=refresh_cache)
+        print(f"Found {len(inv_numbers)} inventory items: {inv_numbers[0]}–{inv_numbers[-1]}")
 
-    if invnrs is not None:
-        inv_numbers = [n for n in inv_numbers if str(n) in invnrs]
-        print(f"Filtered to {len(inv_numbers)} inventory numbers matching --invnr.")
+        if invnrs is not None:
+            inv_numbers = [n for n in inv_numbers if str(n) in invnrs]
+            print(f"Filtered to {len(inv_numbers)} inventory numbers matching --invnr.")
+            if not inv_numbers:
+                print(
+                    f"\nWARNING: {filters.describe(invnrs)} matched no "
+                    "inventarisnummer in access 3.06.05."
+                )
 
-    if list_invnrs:
-        _list_inventory(inv_numbers, csv_out=csv_out)
-        return
+        if list_invnrs:
+            _list_inventory(inv_numbers, csv_out=csv_out)
+            return
 
-    done_file = paths.cache_file(
-        ARCHIVE, "nationaalarchief_done.txt", legacy=Path("nationaalarchief_done.txt")
-    )
-    done: set[str] = set()
-    if done_file.exists():
-        done = set(done_file.read_text().splitlines())
+        # Access 3.06.05 is a flat run of inventarisnummers: no kantoor layer.
+        summary = RunSummary(ARCHIVE, "Zuid-Holland (Nationaal Archief)", unit_name=None)
 
-    for invnr in inv_numbers:
-        key = str(invnr)
-        if key in done:
-            continue
+        done_file = paths.cache_file(
+            ARCHIVE, "nationaalarchief_done.txt", legacy=Path("nationaalarchief_done.txt")
+        )
+        done: set[str] = set()
+        if done_file.exists():
+            done = set(done_file.read_text().splitlines())
 
-        dest_dir = output_dir / key
-        print(f"  invnr {invnr} …", end=" ", flush=True)
-
-        url = VIEWER_URL_TPL.format(invnr=invnr)
-        resp = session.get(url, timeout=60)
-        if resp.status_code == 404:
-            print("404 – skipped")
-            with open(done_file, "a") as f:
-                f.write(key + "\n")
-            time.sleep(0.5)
-            continue
-        resp.raise_for_status()
-        html = resp.text
-
-        scans = _extract_scans_from_viewer(html)
-        if not scans:
-            print("no scans found")
-            with open(done_file, "a") as f:
-                f.write(key + "\n")
-            time.sleep(0.5)
-            continue
-
-        _write_metadata(dest_dir, invnr, html, scans)
-
-        jobs: list[download.Job] = []
-        for scan in scans:
-            label = scan.get("label") or f"{invnr}_{scan.get('order', 0):04d}.jpg"
-            default = scan.get("default") or {}
-            download_url = default.get("url") or ""
-            if not download_url:
-                scan_id = scan.get("id") or scan.get("uuid") or ""
-                if scan_id:
-                    download_url = f"https://service.archief.nl/api/file/v1/default/{scan_id}"
-            if not download_url:
+        for invnr in inv_numbers:
+            key = str(invnr)
+            if key in done:
                 continue
-            jobs.append(download.Job(download_url, dest_dir / label))
-        downloader.run(jobs)
 
-        print(f"{len(scans)} scans")
-        with open(done_file, "a") as f:
-            f.write(key + "\n")
-        time.sleep(1.0)
+            dest_dir = output_dir / key
+            print(f"  invnr {invnr} …", end=" ", flush=True)
 
-    downloader.close()
-    print("Done.")
+            url = VIEWER_URL_TPL.format(invnr=invnr)
+            resp = session.get(url, timeout=60)
+            if resp.status_code == 404:
+                print("404 – skipped")
+                with open(done_file, "a") as f:
+                    f.write(key + "\n")
+                time.sleep(0.5)
+                continue
+            resp.raise_for_status()
+            html = resp.text
+
+            scans = _extract_scans_from_viewer(html)
+            if not scans:
+                print("no scans found")
+                with open(done_file, "a") as f:
+                    f.write(key + "\n")
+                time.sleep(0.5)
+                continue
+
+            _write_metadata(dest_dir, invnr, html, scans)
+            # The viewer page lists every scan, so the size of this register is
+            # known before the first image is fetched.
+            print(f"{len(scans)} scans …", end=" ", flush=True)
+            summary.registers += 1
+
+            jobs: list[download.Job] = []
+            tally = PageTally()
+            for scan in scans:
+                label = scan.get("label") or f"{invnr}_{scan.get('order', 0):04d}.jpg"
+                default = scan.get("default") or {}
+                download_url = default.get("url") or ""
+                if not download_url:
+                    scan_id = scan.get("id") or scan.get("uuid") or ""
+                    if scan_id:
+                        download_url = f"https://service.archief.nl/api/file/v1/default/{scan_id}"
+                if not download_url:
+                    continue
+                jobs.append(download.Job(download_url, dest_dir / label))
+
+            def record_page(job: download.Job, status: str) -> None:
+                tally.record(status, job.dest)
+                summary.pages.record(status, job.dest)
+
+            downloader.run(jobs, on_result=record_page)
+
+            print(tally.describe(len(scans)))
+            with open(done_file, "a") as f:
+                f.write(key + "\n")
+            time.sleep(1.0)
+
+        summary.report()
+        return summary
+    finally:
+        downloader.close()
 
 
 if __name__ == "__main__":

@@ -180,6 +180,29 @@ def test_filter_matching_nothing_warns(mod, h, capsys):
     assert h.downloads == []
 
 
+@pytest.mark.parametrize("mod", ALL)
+def test_kantoor_filter_alone_still_records_completion(mod, h, tmp_path):
+    """--kantoor is no finer than done.txt, so what it finished may be marked.
+
+    The unit keys double as the archives' kantoor identifiers (code for
+    gelderland, minr for zeeland and noordholland), so "A" selects unit A.
+    """
+    mod.main(kantoren={"A"})
+
+    done = _done_file(mod, tmp_path)
+    assert done.exists()
+    assert set(done.read_text().split()) == {"A"}
+
+
+@pytest.mark.parametrize("mod", ALL)
+def test_kantoor_plus_invnr_does_not_write_done_marker(mod, h, tmp_path):
+    """--invnr is finer than done.txt whether or not --kantoor is also set."""
+    mod.main(kantoren={"A"}, invnrs={"4"})
+
+    done = _done_file(mod, tmp_path)
+    assert not done.exists() or done.read_text().strip() == ""
+
+
 @pytest.mark.parametrize("mod", CACHED)
 def test_filtered_run_does_not_write_token_cache(mod, h):
     """The per-kantoor token cache claims to be complete; a subset must not write it."""

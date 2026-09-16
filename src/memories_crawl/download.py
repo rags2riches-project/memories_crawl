@@ -243,14 +243,16 @@ class Downloader:
         # however the workers interleave.
         error: Exception | None = None
         for fut in futures:
-            if error is not None:
-                fut.cancel()
+            if error is not None and fut.cancel():
                 continue
             try:
                 record(futures[fut], fut.result())
             except Exception as exc:
-                # Keep the pre-#26 contract: the first failure aborts the batch.
-                error = exc
+                # Cancel queued work, but drain and count work already running.
+                # The summary must include every file actually written before
+                # the first error is propagated to the pipeline.
+                if error is None:
+                    error = exc
         if error is not None:
             raise error
         return counts

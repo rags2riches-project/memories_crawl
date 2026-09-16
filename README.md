@@ -139,6 +139,72 @@ The filter is applied as early as possible: for archives with cached inventory i
 happens before the slow Playwright token-harvest phase; for the rest it happens after
 token harvest but before downloading. Only matching invnrs are processed.
 
+If the filter matches nothing anywhere in the archive, a `WARNING` is printed, so a
+typo'd inventory number is not mistaken for a successful no-op.
+
+### `--kantoor` — restrict the search to one tax office
+
+An inventory number belongs to exactly one kantoor, but `--invnr` on its own still makes
+the pipeline walk every kantoor looking for it — on a cold cache that is a full discovery
+pass per kantoor. `--kantoor` hands that knowledge back, and is applied *before* any
+discovery work happens. Repeat the flag for multiple:
+
+```bash
+# Gelderland gives each kantoor its own archief-code: both of these work
+uv run memories-crawl gelderland --kantoor Tiel --invnr 4
+uv run memories-crawl gelderland --kantoor 0026 --invnr 4
+
+# Repeatable, and case-insensitive
+uv run memories-crawl zeeland --kantoor goes --kantoor Hulst --list-invnrs
+```
+
+Matching is case-insensitive, ignores surrounding whitespace, and ignores leading zeros
+in numeric identifiers (`--kantoor 22` finds Gelderland's `0022`). The names are the ones
+in the kantoor column of `--list-invnrs`; where an archive also exposes a code or minr for
+the kantoor, that works too:
+
+| Archive | `--kantoor` matches |
+|---|---|
+| friesland | kantoor name (`Sneek`) |
+| drentsarchief | gemeente (`Coevorden`) or archiefnummer (`0119.03`) |
+| bhic | gemeente (`Boxtel`) or archief-code (`036.03.04`) |
+| overijssel | kantoor name (`Almelo`) or minr (`2227676`) |
+| utrechtsarchief | kantoor name (`Amersfoort`) or micode (`337-2`) |
+| limburg | plaats/kantoor (`Amby`) or archive code (`07.D03`) |
+| noordholland | kantoor name (`Haarlem`) or period-section minr |
+| zeeland | kantoor name (`Goes`) or minr (`33439946`) |
+| gelderland | kantoor name (`Tiel`) or archief-code (`0026`) |
+| nationaalarchief | — (3.06.05 is one flat inventory range; the flag is reported as ignored) |
+
+Even without `--kantoor`, a warm cache now does the same job by itself: where an archive
+caches its inventory (Gelderland, Limburg) or a kantoor's complete token harvest
+(Overijssel, Zeeland), a kantoor that provably holds none of the requested invnrs is
+skipped before any network work. A *missing* cache is never treated as evidence — that
+kantoor is still searched.
+
+For Drenthe, BHIC and Friesland it is applied earlier still — in the API query
+itself — so a `--invnr` run makes one targeted request instead of walking the
+whole register listing. On BHIC that is ~18 ms rather than ~5.2 s.
+
+### `--refresh-cache` — re-read the inventory listing
+
+The API-backed archives (Friesland, Nationaal Archief, Drenthe, BHIC) cache their
+archive-level inventory listing under `<out-dir>/.cache/{archive}/` for 30 days, so
+running the CLI many times in a row — a sampler fetching one register per
+invocation, say — does not re-enumerate the archive each time. These archives
+re-catalogue on the order of years, so the cached listing is effectively always
+current; `--refresh-cache` re-collects it anyway:
+
+```bash
+uv run memories-crawl bhic --refresh-cache --list-invnrs
+```
+
+A cache that is unreadable, expired, or written for a different query is discarded
+and re-collected rather than trusted, and an empty listing is never written — a
+transient API failure cannot leave you with an archive that looks empty. The flag
+has no effect on the Playwright archives, which keep their own inventory and token
+caches.
+
 ### `--out-dir` — choose where everything lands
 
 By default scans and caches are written below `./scans`, relative to the directory
@@ -179,6 +245,69 @@ sleep the sequential loops used) plus a global backoff when a server answers 429
 a rebuff seen by one worker pauses all of them. Raising the worker count raises the
 load you put on the server; stay well below what it can take, and drop to
 `--workers 1` if you see 429s or timeouts.
+
+---
+
+## What a run reports
+
+A full crawl runs for hours and writes hundreds of gigabytes, so every run says
+how much it is about to do and how much it did.
+
+Wherever the page list is known before downloading starts — the MAIS pipelines
+(Gelderland, Overijssel, Utrecht, Limburg, Noord-Holland, Zeeland) harvest it
+during the token phase — each kantoor opens with the size of what follows, and
+each register reports its own outcome as it completes:
+
+```
+============================================================
+  [2/21] Kantoor Borculo  (code 0022)
+============================================================
+  49 inventarisnummers with scans
+  → about to download 1,823 pages across 49 registers in Borculo (code 0022)
+  invnr 1 (1  1818 eerste halfjaar) 38 pages (38 new, 0 existing, 0 missing, 21.7 MB)
+  invnr 2 (2  1818 tweede halfjaar) 41 pages (0 new, 41 existing, 0 missing)
+  …
+  Kantoor totals: 1,823 pages (1,782 new, 41 existing, 0 missing, 1.0 GB)
+```
+
+Each archive closes with a summary of what this run cost:
+
+```
+===== Gelderland: run summary =====
+  kantoren processed               21
+  registers processed           1,102
+  pages downloaded             98,412
+  pages already present           120
+  pages missing                    17
+  bytes written               56.1 GB
+```
+
+`pages already present` are the ones a resumed run found on disk and did not
+fetch; `pages missing` are the ones the server refused (404/202, or a download
+that failed every retry). `bytes written` counts only pages this run actually
+fetched — bytes per page vary 36× across archives (Overijssel ~93 KB, Nationaal
+Archief ~3.4 MB), so the figure is measured, never extrapolated.
+
+`memories-crawl all` adds a table across the ten archives:
+
+```
+===== ALL ARCHIVES: grand total =====
+  archive                           kantoren  registers     pages       bytes
+  ---------------------------------------------------------------------------
+  Gelderland                              21      1,102    98,412     56.1 GB
+  Zeeland                                  9      4,471    12,004      7.8 GB
+  Zuid-Holland (Nationaal Archief)         -         82     5,741     19.5 GB
+  ---------------------------------------------------------------------------
+  3 archives                              30      5,655   116,157     83.4 GB
+  190 pages already present, 17 missing.
+  INCOMPLETE (stopped by an error): Zeeland
+```
+
+`all` keeps going when one archive fails, so a pipeline that stopped halfway
+still reports the part it finished and is flagged `INCOMPLETE` in both its own
+block and the table. Figures always describe the run in front of you: under
+`--invnr` they cover only the selected registers, and a run that found
+everything already downloaded reports zeroes.
 
 ---
 
@@ -436,6 +565,8 @@ Scans go below the output root (`./scans` unless `--out-dir` says otherwise):
 │   ├── metadata.json
 │   └── 0000.jpg …
 └── .cache/{archive}/
+    ├── registers.json            – archive-level register listing (30-day TTL)
+    ├── inventory.json            – same, for the Nationaal Archief's EAD invnrs
     ├── inventory_{code}.json     – discovered inventarisnummers
     ├── tokens_*.json             – harvested Playwright tokens
     ├── done.txt                  – resume markers
@@ -474,13 +605,18 @@ Fields vary by archive depending on what metadata is available in the source sys
 
 All pipelines are designed to be safely restarted:
 
-- **Friesland**: tracks completed registers in `<out-dir>/.cache/friesland/friesland_progress.csv` (rows with `status=done` are skipped); existing per-person directories (with `metadata.json`) are skipped on reruns.
+- **Friesland**: tracks completed registers in `<out-dir>/.cache/friesland/friesland_progress.csv` (rows with `status=done` are skipped); existing per-person directories (with `metadata.json`) are skipped on reruns. The register listing is cached in `registers.json` for 30 days (`--refresh-cache` re-collects it).
 - **Gelderland**: inventory and token cache files (`inventory_{code}.json`, `tokens_{code}.json` with partial saves every 25 invnrs) skip the slow Playwright pass; already-downloaded images are skipped by file existence check. Completed kantoren are tracked in `<out-dir>/.cache/gelderland/done.txt`.
-- **Nationaal Archief**: tracks completed inventory numbers in `<out-dir>/.cache/nationaalarchief/nationaalarchief_done.txt`.
-- **Drents Archief**: tracks completed deeds in `<out-dir>/.cache/drentsarchief/drentsarchief_deeds.csv` (rows with `status=done` are skipped), written after every deed so an interrupted run keeps its progress; scans are downloaded to a `.part` file and renamed on completion, so a truncated file is never mistaken for a finished one.
-- **BHIC**: tracks completed registers in `<out-dir>/.cache/bhic/bhic_progress.csv` (rows with `status=done` are skipped); already-downloaded scans are skipped by file existence check.
+- **Nationaal Archief**: tracks completed inventory numbers in `<out-dir>/.cache/nationaalarchief/nationaalarchief_done.txt`. The invnrs parsed from the EAD XML are cached in `inventory.json` for 30 days (`--refresh-cache` re-collects them); the hardcoded fallback list is never cached.
+- **Drents Archief**: tracks completed deeds in `<out-dir>/.cache/drentsarchief/drentsarchief_deeds.csv` (rows with `status=done` are skipped), written after every deed so an interrupted run keeps its progress; scans are downloaded to a `.part` file and renamed on completion, so a truncated file is never mistaken for a finished one. The register listing is cached in `registers.json` for 30 days (`--refresh-cache` re-collects it).
+- **BHIC**: tracks completed registers in `<out-dir>/.cache/bhic/bhic_progress.csv` (rows with `status=done` are skipped); already-downloaded scans are skipped by file existence check. The 19-page register listing is cached in `registers.json` for 30 days (`--refresh-cache` re-collects it).
 - **Overijssel**: token cache files (`tokens_minr_*.json`) skip the slow Playwright pass; already-downloaded images are skipped by file existence check.
 - **Limburg**: inventory and token cache files (`inventory_{code}.json`, `tokens_{code}_{invnr}.json`) skip the slow Playwright pass; already-downloaded images are skipped by file existence check.
 - **Utrechts Archief**: token cache files (`tokens_{micode}_{minr}.json`, with partial saves every 25 items for crash resilience) skip the slow Playwright pass; already-downloaded images are skipped by file existence check. Completed inventarisnummers are tracked in `done_{kantoor}.txt` per kantoor.
 - **Noord-Holland**: token cache files (`tokens_{minr}.json`, with partial saves for crash resilience) skip the slow Playwright pass; already-downloaded images are skipped by file existence check. Completed kantoren are tracked in `<out-dir>/.cache/noordholland/done.txt`.
 - **Zeeland**: token cache files (`tokens_minr_{minr}.json`, with partial saves for crash resilience) skip the slow Playwright pass; already-downloaded images are skipped by file existence check. Completed kantoren are tracked in `<out-dir>/.cache/zeeland/done.txt`.
+
+The `done.txt` markers of Gelderland, Noord-Holland and Zeeland record whole kantoren, so
+a run that fetched only part of one must not write them. `--kantoor` is no finer than the
+marker, so a `--kantoor` run still records the kantoren it finished; a run that also has
+`--invnr` set records nothing and stays stateless with respect to unit completion.

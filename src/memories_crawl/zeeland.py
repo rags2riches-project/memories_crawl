@@ -46,7 +46,8 @@ from pathlib import Path
 
 import requests
 
-from memories_crawl import download, paths
+from memories_crawl import download, filters, paths
+from memories_crawl.summary import PageTally, RunSummary, announce
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -267,6 +268,26 @@ def _load_cached_tokens(kantoor_minr: int) -> list[dict] | None:
             except (json.JSONDecodeError, OSError):
                 pass
     return None
+
+
+def _cached_kantoor_holds(kantoor_minr: int, invnrs: set[str]) -> bool | None:
+    """Whether the kantoor's complete token cache covers any of ``invnrs``.
+
+    Only the complete cache counts as evidence: a partial harvest -- or no
+    cache at all -- says nothing about the invnrs it never reached, so the
+    caller must fall through to the (Playwright) discovery pass.
+    """
+    path = _token_cache_path(kantoor_minr)
+    if not path.exists():
+        return None
+    try:
+        with open(path, encoding="utf-8") as f:
+            tokens = json.load(f)
+    except (json.JSONDecodeError, OSError):
+        return None
+    if not tokens:
+        return None
+    return any(str(t.get("invnr")) in invnrs for t in tokens)
 
 
 def _save_cached_tokens(kantoor_minr: int, tokens: list[dict]) -> None:
@@ -530,7 +551,10 @@ def main(
     csv_out: str | None = None,
     out_dir: Path | None = None,
     workers: int = download.DEFAULT_WORKERS,
-) -> None:
+    kantoren: set[str] | None = None,
+) -> RunSummary | None:
+    kantoor_filter = filters.normalize(kantoren)
+
     if out_dir is not None:
         paths.set_out_dir(out_dir)
     output_dir = paths.archive_dir(ARCHIVE)
@@ -539,165 +563,177 @@ def main(
     downloader = download.Downloader(
         _download_file, workers=workers, rate=DOWNLOAD_RATE, session_factory=_session
     )
+    try:
+        # Phase 1: Discover kantoren
+        print("Discovering kantoren …")
+        kantoren_found = _discover_kantoren()
+        csv_rows: list[dict] = []
 
-    # Phase 1: Discover kantoren
-    print("Discovering kantoren …")
-    kantoren = _discover_kantoren()
-    csv_rows: list[dict] = []
-
-    if not kantoren:
-        print("ERROR: no kantoren found. The tree structure may have changed.")
-        return
-
-    print(f"\n{'=' * 60}")
-    print(f"Processing {len(kantoren)} kantoren")
-    print(f"{'=' * 60}")
-
-    # done.txt records whole kantoren, which is only ever accurate for an
-    # unfiltered run: under --invnr we fetch a subset, so writing the marker
-    # would make every later run skip the rest of the kantoor.
-    filtered = invnrs is not None
-
-    done_file = paths.cache_file(ARCHIVE, "done.txt")
-    done: set[str] = set()
-    if done_file.exists() and not filtered:
-        done = set(done_file.read_text().splitlines())
-
-    def mark_done(key: str) -> None:
-        """Record a kantoor as fully downloaded (no-op under --invnr)."""
-        if filtered:
+        if not kantoren_found:
+            print("ERROR: no kantoren found. The tree structure may have changed.")
             return
-        with open(done_file, "a") as f:
-            f.write(f"{key}\n")
-
-    matched_any = False
-    grand_downloaded = grand_skipped = grand_missing = 0
-
-    for k_idx, k_data in enumerate(kantoren):
-        kantoor = k_data["name"]
-        kantoor_minr = k_data["minr"]
 
         print(f"\n{'=' * 60}")
-        print(f"  [{k_idx + 1}/{len(kantoren)}] {kantoor}")
-        print(f"  kantoor_minr={kantoor_minr}")
+        print(f"Processing {len(kantoren_found)} kantoren")
         print(f"{'=' * 60}")
 
-        if str(kantoor_minr) in done:
-            print("  Already fully downloaded, skipping.")
-            continue
+        summary = RunSummary(ARCHIVE, "Zeeland", unit_name="kantoren")
 
-        # Phase 2a: Discover digitized inventarisnummers
-        all_items = _discover_invnrs(kantoor_minr)
-        if invnrs is not None:
-            all_items = [it for it in all_items if str(it["invnr"]) in invnrs]
+        # done.txt records whole kantoren, which is only ever accurate for an
+        # unfiltered run: under --invnr we fetch a subset, so writing the marker
+        # would make every later run skip the rest of the kantoor.
+        filtered = invnrs is not None
 
-        digitized = [it for it in all_items if it["hasScan"]]
-        if not digitized:
-            # Distinguish "the archive has nothing" from "--invnr removed
-            # everything" -- only the former means the kantoor is done.
+        done_file = paths.cache_file(ARCHIVE, "done.txt")
+        done: set[str] = set()
+        if done_file.exists() and not filtered:
+            done = set(done_file.read_text().splitlines())
+
+        def mark_done(key: str) -> None:
+            """Record a kantoor as fully downloaded (no-op under --invnr)."""
             if filtered:
-                print("  No matching inventarisnummers in this kantoor.")
-            else:
-                print("  No digitized inventarisnummers, skipping.")
+                return
+            with open(done_file, "a") as f:
+                f.write(f"{key}\n")
+
+        matched_any = False
+
+        for k_idx, k_data in enumerate(kantoren_found):
+            kantoor = k_data["name"]
+            kantoor_minr = k_data["minr"]
+
+            # Both filters are applied before the per-kantoor Playwright discovery:
+            # --kantoor by name or minr, --invnr through the kantoor's complete
+            # token cache where one exists (a missing cache proves nothing, so that
+            # kantoor is still visited).
+            if not filters.matches(kantoor_filter, kantoor, kantoor_minr):
+                continue
+            if invnrs is not None and _cached_kantoor_holds(kantoor_minr, invnrs) is False:
+                continue
+
+            print(f"\n{'=' * 60}")
+            print(f"  [{k_idx + 1}/{len(kantoren_found)}] {kantoor}")
+            print(f"  kantoor_minr={kantoor_minr}")
+            print(f"{'=' * 60}")
+
+            if str(kantoor_minr) in done:
+                # The filter did select this kantoor -- it is simply finished, so
+                # this must not count towards the "matched nothing" warning.
+                matched_any = True
+                print("  Already fully downloaded, skipping.")
+                continue
+
+            # Phase 2a: Discover digitized inventarisnummers
+            all_items = _discover_invnrs(kantoor_minr)
+            if invnrs is not None:
+                all_items = [it for it in all_items if str(it["invnr"]) in invnrs]
+
+            digitized = [it for it in all_items if it["hasScan"]]
+            if not digitized:
+                # Distinguish "the archive has nothing" from "--invnr removed
+                # everything" -- only the former means the kantoor is done.
+                if filtered:
+                    print("  No matching inventarisnummers in this kantoor.")
+                else:
+                    print("  No digitized inventarisnummers, skipping.")
+                    mark_done(str(kantoor_minr))
+                continue
+
+            matched_any = True
+
+            # --list-invnrs: print and skip token harvest + download
+            if list_invnrs:
+                print(f"\n{kantoor}:")
+                print(f"  {'invnr':>6}  description")
+                print(f"  {'------':>6}  -----------")
+                for it in digitized:
+                    print(f"  {it['invnr']:>6}  {it['text'][:60]}")
+                    csv_rows.append(
+                        {
+                            "kantoor": kantoor,
+                            "invnr": it["invnr"],
+                            "description": it["text"],
+                        }
+                    )
+                continue
+
+            # Phase 2b: Harvest tokens for all digitized invnrs
+            pages = _harvest_page_tokens(kantoor_minr, all_items, write_cache=not filtered)
+            if filtered:
+                # A warm token cache holds the whole kantoor, so filtering the
+                # discovered invnrs is not enough to keep --invnr honest.
+                pages = [p for p in pages if str(p["invnr"]) in invnrs]
+
+            if not pages:
+                print("  No pages found in this kantoor")
                 mark_done(str(kantoor_minr))
-            continue
+                continue
 
-        matched_any = True
+            # Group pages by invnr
+            invnr_pages: dict[int, list[dict]] = {}
+            invnr_texts: dict[int, str] = {}
+            for p in pages:
+                invnr_pages.setdefault(p["invnr"], []).append(p)
+                if p["invnr"] not in invnr_texts:
+                    invnr_texts[p["invnr"]] = p.get("inv_text", "")
 
-        # --list-invnrs: print and skip token harvest + download
-        if list_invnrs:
-            print(f"\n{kantoor}:")
-            print(f"  {'invnr':>6}  description")
-            print(f"  {'------':>6}  -----------")
-            for it in digitized:
-                print(f"  {it['invnr']:>6}  {it['text'][:60]}")
-                csv_rows.append(
-                    {
-                        "kantoor": kantoor,
-                        "invnr": it["invnr"],
-                        "description": it["text"],
-                    }
-                )
-            continue
+            print(f"  {len(invnr_pages)} inventarisnummers with scans")
+            announce(len(pages), len(invnr_pages), kantoor)
+            summary.units += 1
+            summary.registers += len(invnr_pages)
 
-        # Phase 2b: Harvest tokens for all digitized invnrs
-        pages = _harvest_page_tokens(kantoor_minr, all_items, write_cache=not filtered)
-        if filtered:
-            # A warm token cache holds the whole kantoor, so filtering the
-            # discovered invnrs is not enough to keep --invnr honest.
-            pages = [p for p in pages if str(p["invnr"]) in invnrs]
+            kantoor_tally = PageTally()
+            for invnr, inv_pages in sorted(invnr_pages.items()):
+                inv_text = invnr_texts.get(invnr, "")
+                safe_kantoor = kantoor.replace(". ", "_").replace(" ", "_")[:60]
+                dest_dir = output_dir / safe_kantoor / str(invnr)
+                print(f"  invnr {invnr} ({inv_text[:40].strip()}) …", end=" ", flush=True)
 
-        if not pages:
-            print("  No pages found in this kantoor")
+                _write_metadata(dest_dir, kantoor, invnr, inv_text, len(inv_pages))
+
+                jobs = []
+                tally = PageTally()
+                for p in sorted(inv_pages, key=lambda x: (x["page"], x.get("slug", ""))):
+                    slug = p.get("slug", "")
+                    name = f"{slug}_{p['page']:04d}.jpg" if slug else f"{p['page']:04d}.jpg"
+                    jobs.append(download.Job(_fullsize_url(p["thumb_url"]), dest_dir / name))
+
+                def record_page(job: download.Job, status: str) -> None:
+                    tally.record(status, job.dest)
+                    summary.pages.record(status, job.dest)
+
+                downloader.run(jobs, on_result=record_page)
+
+                print(tally.describe(len(inv_pages)))
+
+                # Fold in per register, not per kantoor, so a run that dies midway
+                # still reports everything it downloaded.
+                kantoor_tally += tally
+
+            print(f"  Kantoor totals: {kantoor_tally.describe()}")
+
             mark_done(str(kantoor_minr))
-            continue
 
-        # Group pages by invnr
-        invnr_pages: dict[int, list[dict]] = {}
-        invnr_texts: dict[int, str] = {}
-        for p in pages:
-            invnr_pages.setdefault(p["invnr"], []).append(p)
-            if p["invnr"] not in invnr_texts:
-                invnr_texts[p["invnr"]] = p.get("inv_text", "")
-
-        print(f"  {len(invnr_pages)} inventarisnummers with scans")
-
-        downloaded = skipped = missing = 0
-        for invnr, inv_pages in sorted(invnr_pages.items()):
-            inv_text = invnr_texts.get(invnr, "")
-            safe_kantoor = kantoor.replace(". ", "_").replace(" ", "_")[:60]
-            dest_dir = output_dir / safe_kantoor / str(invnr)
-            print(f"  invnr {invnr} ({inv_text[:40].strip()}) …", end=" ", flush=True)
-
-            _write_metadata(dest_dir, kantoor, invnr, inv_text, len(inv_pages))
-
-            jobs = []
-            for p in sorted(inv_pages, key=lambda x: (x["page"], x.get("slug", ""))):
-                slug = p.get("slug", "")
-                name = f"{slug}_{p['page']:04d}.jpg" if slug else f"{p['page']:04d}.jpg"
-                jobs.append(download.Job(_fullsize_url(p["thumb_url"]), dest_dir / name))
-            inv_downloaded, inv_skipped, inv_missing = download.tally(downloader.run(jobs))
-
+        if (filtered or kantoor_filter is not None) and not matched_any:
             print(
-                f"{len(inv_pages)} pages "
-                f"({inv_downloaded} new, {inv_skipped} existing, {inv_missing} missing)"
+                f"\nWARNING: {filters.describe(invnrs, kantoren)} matched no "
+                f"inventarisnummer in any of the {len(kantoren_found)} kantoren."
             )
 
-            downloaded += inv_downloaded
-            skipped += inv_skipped
-            missing += inv_missing
+        if list_invnrs:
+            print()
+            if csv_out and csv_rows:
+                with open(csv_out, "w", newline="", encoding="utf-8") as f:
+                    writer = csv.DictWriter(f, fieldnames=["kantoor", "invnr", "description"])
+                    writer.writeheader()
+                    writer.writerows(csv_rows)
+                print(f"Wrote {len(csv_rows)} rows to {csv_out}\n")
+            return
 
-        print(f"  Kantoor totals: {downloaded} new, {skipped} existing, {missing} missing")
-
-        grand_downloaded += downloaded
-        grand_skipped += skipped
-        grand_missing += missing
-
-        mark_done(str(kantoor_minr))
-
-    downloader.close()
-
-    if filtered and not matched_any:
-        print(
-            f"\nWARNING: --invnr {', '.join(sorted(invnrs))} matched no "
-            f"inventarisnummer in any of the {len(kantoren)} kantoren."
-        )
-
-    if list_invnrs:
-        print()
-        if csv_out and csv_rows:
-            with open(csv_out, "w", newline="", encoding="utf-8") as f:
-                writer = csv.DictWriter(f, fieldnames=["kantoor", "invnr", "description"])
-                writer.writeheader()
-                writer.writerows(csv_rows)
-            print(f"Wrote {len(csv_rows)} rows to {csv_out}\n")
-        return
-
-    print("\n===== COMPLETE =====")
-    print(
-        f"Total: {grand_downloaded} downloaded, {grand_skipped} existing, {grand_missing} missing"
-    )
-    print("Done (Zeeland).")
+        summary.report()
+        return summary
+    finally:
+        downloader.close()
 
 
 if __name__ == "__main__":
