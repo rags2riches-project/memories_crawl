@@ -44,7 +44,7 @@ from pathlib import Path
 
 import requests
 
-from memories_crawl import paths
+from memories_crawl import filters, paths
 
 API_BASE = "https://webservices.memorix.nl/genealogy"
 API_KEY = "a85387a2-fdb2-44d0-8209-3635e59c537e"
@@ -228,7 +228,10 @@ def main(
     list_invnrs: bool = False,
     csv_out: str | None = None,
     out_dir: Path | None = None,
+    kantoren: set[str] | None = None,
 ) -> None:
+    kantoor_filter = filters.normalize(kantoren)
+
     if out_dir is not None:
         paths.set_out_dir(out_dir)
     output_dir = paths.archive_dir(ARCHIVE)
@@ -240,9 +243,31 @@ def main(
     registers = _collect_registers(session)
     print(f"Found {len(registers)} registers.")
 
+    # Both filters are resolved from the one /register request, so no deeds or
+    # persons are paged for a register that the filters drop.  Drenthe's
+    # kantoor is the gemeente column of --list-invnrs; because the same invnr
+    # recurs under several archiefnummers, that number is accepted too.
+    if kantoor_filter is not None:
+        registers = [
+            r
+            for r in registers
+            if filters.matches(
+                kantoor_filter,
+                _register_gemeente(r),
+                (r.get("metadata") or {}).get("archiefnummer") or "",
+            )
+        ]
     if invnrs is not None:
         registers = [r for r in registers if _register_invnr(r) in invnrs]
-        print(f"Filtered to {len(registers)} registers matching --invnr.")
+    if invnrs is not None or kantoor_filter is not None:
+        print(
+            f"Filtered to {len(registers)} registers matching {filters.describe(invnrs, kantoren)}."
+        )
+        if not registers:
+            print(
+                f"\nWARNING: {filters.describe(invnrs, kantoren)} matched no "
+                "register in the Drents Archief collection."
+            )
 
     if list_invnrs:
         _list_registers(registers, csv_out=csv_out)

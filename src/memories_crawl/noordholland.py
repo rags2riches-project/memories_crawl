@@ -44,7 +44,7 @@ from pathlib import Path
 
 import requests
 
-from memories_crawl import paths
+from memories_crawl import filters, paths
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -522,7 +522,10 @@ def main(
     list_invnrs: bool = False,
     csv_out: str | None = None,
     out_dir: Path | None = None,
+    kantoren: set[str] | None = None,
 ) -> None:
+    kantoor_filter = filters.normalize(kantoren)
+
     if out_dir is not None:
         paths.set_out_dir(out_dir)
     output_dir = paths.archive_dir(ARCHIVE)
@@ -569,12 +572,20 @@ def main(
         kantoor = section["kantoor"]
         period_text = section["period_text"]
 
+        # sections.json already names every kantoor, so --kantoor resolves
+        # against the cache -- before the (Playwright) token harvest.
+        if not filters.matches(kantoor_filter, kantoor, period_minr):
+            continue
+
         print(f"\n{'=' * 60}")
         print(f"  [{section_idx + 1}/{len(sections)}] {kantoor}: {period_text[:80]}")
         print(f"  period_minr={period_minr}")
         print(f"{'=' * 60}")
 
         if str(period_minr) in done:
+            # The filter did select this section -- it is simply finished, so
+            # this must not count towards the "matched nothing" warning.
+            matched_any = True
             print("  Already fully downloaded, skipping.")
             continue
 
@@ -667,9 +678,9 @@ def main(
 
         mark_done(str(period_minr))
 
-    if filtered and not matched_any:
+    if (filtered or kantoor_filter is not None) and not matched_any:
         print(
-            f"\nWARNING: --invnr {', '.join(sorted(invnrs))} matched no "
+            f"\nWARNING: {filters.describe(invnrs, kantoren)} matched no "
             f"inventarisnummer in any of the {len(sections)} period sections."
         )
 

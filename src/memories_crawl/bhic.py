@@ -41,7 +41,7 @@ from pathlib import Path
 
 import requests
 
-from memories_crawl import paths
+from memories_crawl import filters, paths
 
 API_BASE = "https://webservices.memorix.nl/genealogy"
 API_KEY = "24c66d08-da4a-4d60-917f-5942681dcaa1"
@@ -282,7 +282,10 @@ def main(
     list_invnrs: bool = False,
     csv_out: str | None = None,
     out_dir: Path | None = None,
+    kantoren: set[str] | None = None,
 ) -> None:
+    kantoor_filter = filters.normalize(kantoren)
+
     if out_dir is not None:
         paths.set_out_dir(out_dir)
     paths.archive_dir(ARCHIVE).mkdir(parents=True, exist_ok=True)
@@ -293,11 +296,33 @@ def main(
     registers = _paginate(session, "/register", REGISTER_FILTER, "register")
     print(f"Found {len(registers)} registers.")
 
+    # Both filters are resolved from the register listing, which is the only
+    # request made so far -- no deeds, persons or assets are fetched for a
+    # register that the filters drop.  BHIC's kantoor is the gemeente column of
+    # --list-invnrs; the archief-code (036.03.07, …) is accepted as well.
+    if kantoor_filter is not None:
+        registers = [
+            r
+            for r in registers
+            if filters.matches(
+                kantoor_filter,
+                (r.get("metadata") or {}).get("gemeente") or "",
+                (r.get("metadata") or {}).get("code") or "",
+            )
+        ]
     if invnrs is not None:
         registers = [
             r for r in registers if (r.get("metadata") or {}).get("inventarisnummer", "") in invnrs
         ]
-        print(f"Filtered to {len(registers)} registers matching --invnr.")
+    if invnrs is not None or kantoor_filter is not None:
+        print(
+            f"Filtered to {len(registers)} registers matching {filters.describe(invnrs, kantoren)}."
+        )
+        if not registers:
+            print(
+                f"\nWARNING: {filters.describe(invnrs, kantoren)} matched no "
+                "register in the BHIC collection."
+            )
 
     if list_invnrs:
         _list_registers(registers, csv_out=csv_out)

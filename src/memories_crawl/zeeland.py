@@ -47,7 +47,7 @@ from pathlib import Path
 
 import requests
 
-from memories_crawl import paths
+from memories_crawl import filters, paths
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -265,6 +265,26 @@ def _load_cached_tokens(kantoor_minr: int) -> list[dict] | None:
             except (json.JSONDecodeError, OSError):
                 pass
     return None
+
+
+def _cached_kantoor_holds(kantoor_minr: int, invnrs: set[str]) -> bool | None:
+    """Whether the kantoor's complete token cache covers any of ``invnrs``.
+
+    Only the complete cache counts as evidence: a partial harvest -- or no
+    cache at all -- says nothing about the invnrs it never reached, so the
+    caller must fall through to the (Playwright) discovery pass.
+    """
+    path = _token_cache_path(kantoor_minr)
+    if not path.exists():
+        return None
+    try:
+        with open(path, encoding="utf-8") as f:
+            tokens = json.load(f)
+    except (json.JSONDecodeError, OSError):
+        return None
+    if not tokens:
+        return None
+    return any(str(t.get("invnr")) in invnrs for t in tokens)
 
 
 def _save_cached_tokens(kantoor_minr: int, tokens: list[dict]) -> None:
@@ -520,7 +540,10 @@ def main(
     list_invnrs: bool = False,
     csv_out: str | None = None,
     out_dir: Path | None = None,
+    kantoren: set[str] | None = None,
 ) -> None:
+    kantoor_filter = filters.normalize(kantoren)
+
     if out_dir is not None:
         paths.set_out_dir(out_dir)
     output_dir = paths.archive_dir(ARCHIVE)
@@ -532,15 +555,15 @@ def main(
 
     # Phase 1: Discover kantoren
     print("Discovering kantoren …")
-    kantoren = _discover_kantoren()
+    kantoren_found = _discover_kantoren()
     csv_rows: list[dict] = []
 
-    if not kantoren:
+    if not kantoren_found:
         print("ERROR: no kantoren found. The tree structure may have changed.")
         return
 
     print(f"\n{'=' * 60}")
-    print(f"Processing {len(kantoren)} kantoren")
+    print(f"Processing {len(kantoren_found)} kantoren")
     print(f"{'=' * 60}")
 
     # done.txt records whole kantoren, which is only ever accurate for an
@@ -563,16 +586,28 @@ def main(
     matched_any = False
     grand_downloaded = grand_skipped = grand_missing = 0
 
-    for k_idx, k_data in enumerate(kantoren):
+    for k_idx, k_data in enumerate(kantoren_found):
         kantoor = k_data["name"]
         kantoor_minr = k_data["minr"]
 
+        # Both filters are applied before the per-kantoor Playwright discovery:
+        # --kantoor by name or minr, --invnr through the kantoor's complete
+        # token cache where one exists (a missing cache proves nothing, so that
+        # kantoor is still visited).
+        if not filters.matches(kantoor_filter, kantoor, kantoor_minr):
+            continue
+        if invnrs is not None and _cached_kantoor_holds(kantoor_minr, invnrs) is False:
+            continue
+
         print(f"\n{'=' * 60}")
-        print(f"  [{k_idx + 1}/{len(kantoren)}] {kantoor}")
+        print(f"  [{k_idx + 1}/{len(kantoren_found)}] {kantoor}")
         print(f"  kantoor_minr={kantoor_minr}")
         print(f"{'=' * 60}")
 
         if str(kantoor_minr) in done:
+            # The filter did select this kantoor -- it is simply finished, so
+            # this must not count towards the "matched nothing" warning.
+            matched_any = True
             print("  Already fully downloaded, skipping.")
             continue
 
@@ -675,10 +710,10 @@ def main(
 
         mark_done(str(kantoor_minr))
 
-    if filtered and not matched_any:
+    if (filtered or kantoor_filter is not None) and not matched_any:
         print(
-            f"\nWARNING: --invnr {', '.join(sorted(invnrs))} matched no "
-            f"inventarisnummer in any of the {len(kantoren)} kantoren."
+            f"\nWARNING: {filters.describe(invnrs, kantoren)} matched no "
+            f"inventarisnummer in any of the {len(kantoren_found)} kantoren."
         )
 
     if list_invnrs:

@@ -38,7 +38,7 @@ from pathlib import Path
 
 import requests
 
-from memories_crawl import paths
+from memories_crawl import filters, paths
 
 API_BASE = "https://webservices.memorix.nl/genealogy"
 API_KEY = "aa030ec4-12d0-4dc0-afaf-b65fd6128b39"
@@ -243,7 +243,10 @@ def main(
     list_invnrs: bool = False,
     csv_out: str | None = None,
     out_dir: Path | None = None,
+    kantoren: set[str] | None = None,
 ) -> None:
+    kantoor_filter = filters.normalize(kantoren)
+
     if out_dir is not None:
         paths.set_out_dir(out_dir)
     output_dir = paths.archive_dir(ARCHIVE)
@@ -255,11 +258,26 @@ def main(
     registers = _paginate(session, "/register", REGISTER_FILTER, "register")
     print(f"Found {len(registers)} registers.")
 
+    # Both filters are resolved from the register listing, which is the only
+    # request made so far -- nothing per-register is fetched for a register
+    # that the filters drop.
+    if kantoor_filter is not None:
+        registers = [
+            r for r in registers if filters.matches(kantoor_filter, _kantoor_from_register(r))
+        ]
     if invnrs is not None:
         registers = [
             r for r in registers if (r.get("metadata") or {}).get("inventarisnummer", "") in invnrs
         ]
-        print(f"Filtered to {len(registers)} registers matching --invnr.")
+    if invnrs is not None or kantoor_filter is not None:
+        print(
+            f"Filtered to {len(registers)} registers matching {filters.describe(invnrs, kantoren)}."
+        )
+        if not registers:
+            print(
+                f"\nWARNING: {filters.describe(invnrs, kantoren)} matched no "
+                "register in the Tresoar collection."
+            )
 
     if list_invnrs:
         _list_registers(registers, csv_out=csv_out)

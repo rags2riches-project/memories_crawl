@@ -44,6 +44,7 @@ Every pipeline's `main()` takes `out_dir: Path | None = None` and calls
 |---|---|
 | `src/memories_crawl/cli.py` | CLI dispatcher |
 | `src/memories_crawl/paths.py` | Output root, per-archive scan dirs and cache paths |
+| `src/memories_crawl/filters.py` | Case-insensitive name/code matching for `--kantoor` |
 | `src/memories_crawl/nationaalarchief.py` | Zuid-Holland: scrape viewer pages, download via UUID |
 | `src/memories_crawl/drentsarchief.py` | Drenthe: Memorix REST API, deed→asset chain |
 | `src/memories_crawl/bhic.py` | Noord-Brabant (BHIC): Memorix REST API, register→asset chain |
@@ -54,6 +55,45 @@ Every pipeline's `main()` takes `out_dir: Path | None = None` and calls
 | `src/memories_crawl/zeeland.py` | Zeeland: Playwright-based MAIS hybrid (inv3 discovery + inv2 strip harvest) |
 | `src/memories_crawl/friesland.py` | Friesland: Tresoar / AlleFriezen Memorix REST API, register→deed→person chain |
 | `src/memories_crawl/gelderland.py` | Gelderland: Playwright-based MAIS, one micode per kantoor (21 codes), strip auto-loads on inv2 minr |
+
+## Filters: `--invnr` and `--kantoor`
+
+`--invnr` (repeatable) narrows the download to specific inventarisnummers.
+`--kantoor` (repeatable) narrows the *search* to specific kantoren, and is
+applied **before** any discovery or token-harvest work — an inventarisnummer
+belongs to exactly one kantoor, so without it a single-register fetch walks all
+21 Gelderland kantoren to find one (issue #24).
+
+`src/memories_crawl/filters.py` does the matching: case-insensitive, whitespace
+trimmed, leading zeros ignored for numeric identifiers (`--kantoor 22` finds
+Gelderland's `0022`). A value matches when it equals *any* label the pipeline
+offers for that kantoor — the name from the `kantoor` column of `--list-invnrs`
+plus, where the archive has one, the archief-code (gelderland `0026`, bhic
+`036.03.04`, limburg `07.D03`), the micode (utrechtsarchief `337-2`), the minr
+(overijssel, zeeland, noordholland) or the archiefnummer (drentsarchief).
+`nationaalarchief` has no kantoor subdivision; the CLI reports the flag as
+ignored rather than pretending to apply it.
+
+Every pipeline's `main()` takes `kantoren: set[str] | None = None` (the raw
+user strings — pass them to `filters.normalize()` once at the top) except
+`nationaalarchief`.
+
+**Cache-driven skipping.** Where a cache can *prove* a kantoor holds none of the
+requested invnrs, the kantoor is skipped before any network work even without
+`--kantoor`: gelderland and limburg consult `inventory_{code}.json`, overijssel
+and zeeland the kantoor's *complete* token cache (a partial harvest is not
+evidence). A missing cache must always fall through to normal discovery —
+absence of evidence is never evidence of absence.
+
+**Warnings.** A filter that matches nothing across the whole archive prints a
+`WARNING` line, so `--invnr 99999` is distinguishable from a successful no-op.
+A kantoor already recorded in `done.txt` counts as matched.
+
+**`done.txt` interaction.** The markers are keyed by kantoor, which is coarser
+than `--invnr` but exactly as coarse as `--kantoor`: a `--kantoor` run may
+record the kantoren it fully processed, a run with `--invnr` set may not.
+`tests/test_invnr_filter.py` (issue #22) and `tests/test_kantoor_filter.py`
+(issue #24) are the regression tests for that rule.
 
 ## Exclusion rule
 
@@ -288,6 +328,8 @@ Partial token caches allow resuming interrupted harvest runs.
 so a filtered run neither reads nor writes it: ``--invnr`` runs are stateless with
 respect to unit completion, and per-file existence checks keep repeat runs cheap.
 A filter that matches nothing anywhere prints a warning instead of exiting silently.
+``--kantoor`` is exactly as coarse as the marker, so a ``--kantoor``-only run
+still records the kantoren it finished; adding ``--invnr`` suppresses that again.
 
 ### Zeeland (Zeeuws Archief) – MAIS token extraction
 
@@ -345,6 +387,8 @@ Partial token caches allow resuming interrupted harvest runs.
 so a filtered run neither reads nor writes it: ``--invnr`` runs are stateless with
 respect to unit completion, and per-file existence checks keep repeat runs cheap.
 A filter that matches nothing anywhere prints a warning instead of exiting silently.
+``--kantoor`` is exactly as coarse as the marker, so a ``--kantoor``-only run
+still records the kantoren it finished; adding ``--invnr`` suppresses that again.
 The per-kantoor token cache is suppressed the same way, since it claims to hold
 every page in the kantoor; a warm cache is still narrowed to the requested invnrs.
 
@@ -418,6 +462,8 @@ here.
 so a filtered run neither reads nor writes it: ``--invnr`` runs are stateless with
 respect to unit completion, and per-file existence checks keep repeat runs cheap.
 A filter that matches nothing anywhere prints a warning instead of exiting silently.
+``--kantoor`` is exactly as coarse as the marker, so a ``--kantoor``-only run
+still records the kantoren it finished; adding ``--invnr`` suppresses that again.
 The per-kantoor code token cache is suppressed the same way, since it claims to hold
 every page in the kantoor code; a warm cache is still narrowed to the requested invnrs.
 

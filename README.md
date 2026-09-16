@@ -73,7 +73,7 @@ memories-crawl gelderland
 
 ## Filtering and listing inventory numbers
 
-Three flags let you scope downloads instead of pulling the entire archive:
+Four flags let you scope downloads instead of pulling the entire archive:
 
 ### `--list-invnrs` — see what's available
 
@@ -137,6 +137,49 @@ uv run memories-crawl zeeland --invnr 1 --invnr 42 --list-invnrs
 The filter is applied as early as possible: for archives with cached inventory it
 happens before the slow Playwright token-harvest phase; for the rest it happens after
 token harvest but before downloading. Only matching invnrs are processed.
+
+If the filter matches nothing anywhere in the archive, a `WARNING` is printed, so a
+typo'd inventory number is not mistaken for a successful no-op.
+
+### `--kantoor` — restrict the search to one tax office
+
+An inventory number belongs to exactly one kantoor, but `--invnr` on its own still makes
+the pipeline walk every kantoor looking for it — on a cold cache that is a full discovery
+pass per kantoor. `--kantoor` hands that knowledge back, and is applied *before* any
+discovery work happens. Repeat the flag for multiple:
+
+```bash
+# Gelderland gives each kantoor its own archief-code: both of these work
+uv run memories-crawl gelderland --kantoor Tiel --invnr 4
+uv run memories-crawl gelderland --kantoor 0026 --invnr 4
+
+# Repeatable, and case-insensitive
+uv run memories-crawl zeeland --kantoor goes --kantoor Hulst --list-invnrs
+```
+
+Matching is case-insensitive, ignores surrounding whitespace, and ignores leading zeros
+in numeric identifiers (`--kantoor 22` finds Gelderland's `0022`). The names are the ones
+in the kantoor column of `--list-invnrs`; where an archive also exposes a code or minr for
+the kantoor, that works too:
+
+| Archive | `--kantoor` matches |
+|---|---|
+| friesland | kantoor name (`Sneek`) |
+| drentsarchief | gemeente (`Coevorden`) or archiefnummer (`0119.03`) |
+| bhic | gemeente (`Boxtel`) or archief-code (`036.03.04`) |
+| overijssel | kantoor name (`Almelo`) or minr (`2227676`) |
+| utrechtsarchief | kantoor name (`Amersfoort`) or micode (`337-2`) |
+| limburg | plaats/kantoor (`Amby`) or archive code (`07.D03`) |
+| noordholland | kantoor name (`Haarlem`) or period-section minr |
+| zeeland | kantoor name (`Goes`) or minr (`33439946`) |
+| gelderland | kantoor name (`Tiel`) or archief-code (`0026`) |
+| nationaalarchief | — (3.06.05 is one flat inventory range; the flag is reported as ignored) |
+
+Even without `--kantoor`, a warm cache now does the same job by itself: where an archive
+caches its inventory (Gelderland, Limburg) or a kantoor's complete token harvest
+(Overijssel, Zeeland), a kantoor that provably holds none of the requested invnrs is
+skipped before any network work. A *missing* cache is never treated as evidence — that
+kantoor is still searched.
 
 ### `--out-dir` — choose where everything lands
 
@@ -458,3 +501,8 @@ All pipelines are designed to be safely restarted:
 - **Utrechts Archief**: token cache files (`tokens_{micode}_{minr}.json`, with partial saves every 25 items for crash resilience) skip the slow Playwright pass; already-downloaded images are skipped by file existence check. Completed inventarisnummers are tracked in `done_{kantoor}.txt` per kantoor.
 - **Noord-Holland**: token cache files (`tokens_{minr}.json`, with partial saves for crash resilience) skip the slow Playwright pass; already-downloaded images are skipped by file existence check. Completed kantoren are tracked in `<out-dir>/.cache/noordholland/done.txt`.
 - **Zeeland**: token cache files (`tokens_minr_{minr}.json`, with partial saves for crash resilience) skip the slow Playwright pass; already-downloaded images are skipped by file existence check. Completed kantoren are tracked in `<out-dir>/.cache/zeeland/done.txt`.
+
+The `done.txt` markers of Gelderland, Noord-Holland and Zeeland record whole kantoren, so
+a run that fetched only part of one must not write them. `--kantoor` is no finer than the
+marker, so a `--kantoor` run still records the kantoren it finished; a run that also has
+`--invnr` set records nothing and stays stateless with respect to unit completion.

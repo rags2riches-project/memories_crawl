@@ -43,7 +43,7 @@ from pathlib import Path
 
 import requests
 
-from memories_crawl import paths
+from memories_crawl import filters, paths
 
 ARCHIVE_NAME = "Het Utrechts Archief"
 MAIS_ADT = "39"
@@ -468,7 +468,10 @@ def main(
     list_invnrs: bool = False,
     csv_out: str | None = None,
     out_dir: Path | None = None,
+    kantoren: set[str] | None = None,
 ) -> None:
+    kantoor_filter = filters.normalize(kantoren)
+
     if out_dir is not None:
         paths.set_out_dir(out_dir)
     output_dir = paths.archive_dir(ARCHIVE)
@@ -478,8 +481,14 @@ def main(
     session.headers["User-Agent"] = USER_AGENT
 
     csv_rows: list[dict] = []
+    matched_any = False
 
     for kantoor, micode in KANTOREN.items():
+        # --kantoor is applied before _discover_subsections, which is an
+        # uncached Playwright pass per kantoor.
+        if not filters.matches(kantoor_filter, kantoor, micode):
+            continue
+
         print(f"\n{'=' * 60}")
         print(f"  {kantoor} (micode={micode})")
         print(f"{'=' * 60}")
@@ -528,6 +537,9 @@ def main(
                     invnr: ips for invnr, ips in invnr_pages.items() if str(invnr) in invnrs
                 }
                 invnr_texts = {invnr: invnr_texts[invnr] for invnr in invnr_pages}
+
+            if invnr_pages:
+                matched_any = True
 
             # --list-invnrs: print and skip download for this section
             if list_invnrs:
@@ -587,6 +599,12 @@ def main(
                 missing += inv_missing
 
             print(f"    Section totals: {downloaded} new, {skipped} existing, {missing} missing")
+
+    if (invnrs is not None or kantoor_filter is not None) and not matched_any:
+        print(
+            f"\nWARNING: {filters.describe(invnrs, kantoren)} matched no "
+            f"inventarisnummer in any of the {len(KANTOREN)} kantoren."
+        )
 
     if list_invnrs:
         print()
