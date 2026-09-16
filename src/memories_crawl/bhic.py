@@ -253,36 +253,16 @@ def _asset_filename(asset: dict) -> str:
     return _sanitize(name) + ".jpg"
 
 
-def _download_file(session: requests.Session, url: str, dest: Path, retries: int = 3) -> str:
-    if dest.exists() and dest.stat().st_size > 0:
-        return "exists"
-    delay = 5
-    for attempt in range(retries):
-        try:
-            resp = session.get(url, stream=True, timeout=180, allow_redirects=True)
-        except requests.RequestException as exc:
-            if attempt < retries - 1:
-                print(f"      network error ({exc}); retry in {delay}s", flush=True)
-                time.sleep(delay)
-                delay *= 2
-                continue
-            return "failed"
-        if resp.status_code == 404:
-            return "missing"
-        if resp.status_code in (429, 502, 503, 504) and attempt < retries - 1:
-            time.sleep(delay)
-            delay *= 2
-            continue
-        resp.raise_for_status()
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        tmp = dest.with_suffix(dest.suffix + ".part")
-        with open(tmp, "wb") as f:
-            for chunk in resp.iter_content(65536):
-                if chunk:
-                    f.write(chunk)
-        tmp.rename(dest)
-        return "downloaded"
-    return "failed"
+def _download_file(session: requests.Session, url: str, dest: Path) -> str:
+    """Fetch one scan; see :func:`download.fetch_file` for the retry rules."""
+    return download.fetch_file(
+        session,
+        url,
+        dest,
+        missing_statuses=(404,),
+        timeout=180,
+        allow_redirects=True,
+    )
 
 
 def _load_done() -> set[str]:

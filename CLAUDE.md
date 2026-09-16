@@ -61,6 +61,13 @@ splits the returned `Counter` with `download.tally(counts)` →
   nothing for the Memorix/NA pipelines, which never slept between images).
 * A 429 pauses **all** workers (`RateLimiter.penalize`, honouring `Retry-After`),
   because per-worker backoff would just let the other workers keep hammering.
+* **Every pipeline's `_download_file` delegates to `download.fetch_file`** and
+  does nothing else. Do not hand-roll a fetch: `fetch_file` owns the exists
+  check, the retry rules, the atomic `.part` write and the status mapping, and
+  takes the two things that genuinely differ per archive — `missing_statuses`
+  (`(404,)`, or `(404, 202)` where a MAIS server answers 202 + an SVG
+  placeholder for an untokened page) and `timeout`. It returns `failed` rather
+  than raising, so one bad page never ends the register.
 * Counters and the `on_result` callback run under the pool's lock, so pipeline
   bookkeeping need not be thread-safe itself.
 * Keep discovery, the Playwright token harvest and metadata writes sequential.
@@ -148,7 +155,7 @@ side over the cached list.
 | `src/memories_crawl/cli.py` | CLI dispatcher |
 | `src/memories_crawl/paths.py` | Output root, per-archive scan dirs and cache paths |
 | `src/memories_crawl/listing.py` | `--list-invnrs` count vocabulary: the `?` unknown marker, `has_scans()`, the "nothing to download" suffix |
-| `src/memories_crawl/download.py` | Bounded thread pool, shared rate limiter and global 429 backoff for image fetches |
+| `src/memories_crawl/download.py` | Bounded thread pool, shared rate limiter, global 429 backoff, and `fetch_file` (per-image retry + atomic write) |
 
 | `src/memories_crawl/summary.py` | Download counters, per-archive summary, cross-archive total |
 
