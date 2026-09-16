@@ -38,6 +38,33 @@ an upgrade never silently repeats a token harvest.
 Every pipeline's `main()` takes `out_dir: Path | None = None` and calls
 `paths.set_out_dir(out_dir)` when it is given; the CLI sets it once up front.
 
+## Concurrent image downloads
+
+Image fetches — and only image fetches — go through the shared thread pool in
+`src/memories_crawl/download.py`. Every pipeline's `main()` takes
+`workers: int = download.DEFAULT_WORKERS` (4), which the CLI fills from
+`--workers`; `--workers 1` restores the strictly sequential pre-0.3 path (same
+thread as the caller, jobs walked in order).
+
+A pipeline builds one `download.Downloader(_download_file, workers=workers,
+rate=DOWNLOAD_RATE, session_factory=_session)` per run, then hands each batch of
+`download.Job(url, dest, key=None)` to `downloader.run(jobs, on_result=…)` and
+splits the returned `Counter` with `download.tally(counts)` →
+`(downloaded, existing, missing)`. Rules:
+
+* **Never share a `requests.Session` across threads** – it is not thread-safe.
+  The pool builds one per worker thread from `session_factory`, so a pipeline
+  needs a module-level `_session()` that sets its headers (User-Agent, Referer).
+* `rate` is the requests/second ceiling shared by all workers, replacing the old
+  fixed `time.sleep` between images. Pass the pace that sleep produced
+  (`DOWNLOAD_RATE = 1 / 0.15` for the MAIS pipelines, `10.0` for Limburg,
+  nothing for the Memorix/NA pipelines, which never slept between images).
+* A 429 pauses **all** workers (`RateLimiter.penalize`, honouring `Retry-After`),
+  because per-worker backoff would just let the other workers keep hammering.
+* Counters and the `on_result` callback run under the pool's lock, so pipeline
+  bookkeeping need not be thread-safe itself.
+* Keep discovery, the Playwright token harvest and metadata writes sequential.
+
 ## Run reporting (issue #19)
 
 `src/memories_crawl/summary.py` holds the counting. Every pipeline's `main()`
@@ -120,6 +147,8 @@ side over the cached list.
 |---|---|
 | `src/memories_crawl/cli.py` | CLI dispatcher |
 | `src/memories_crawl/paths.py` | Output root, per-archive scan dirs and cache paths |
+| `src/memories_crawl/download.py` | Bounded thread pool, shared rate limiter and global 429 backoff for image fetches |
+
 | `src/memories_crawl/summary.py` | Download counters, per-archive summary, cross-archive total |
 
 | `src/memories_crawl/regcache.py` | TTL cache for the archive-level inventory listing |

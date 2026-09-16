@@ -73,7 +73,8 @@ memories-crawl gelderland
 
 ## Filtering and listing inventory numbers
 
-Four flags let you scope downloads instead of pulling the entire archive:
+These flags let you scope downloads instead of pulling the entire archive, and
+choose how hard the download pushes:
 
 ### `--list-invnrs` — see what's available
 
@@ -219,6 +220,31 @@ uv run memories-crawl gelderland --out-dir /mnt/data/mvs
 Playwright token caches live below the output root, so a `--list-invnrs` pass and a
 download pass run with different roots cannot see each other's caches, and the token
 harvest — by far the slowest part of the MAIS pipelines — silently runs twice.
+
+### `--workers` — how many scans to fetch at once
+
+Image downloads run through a small thread pool (4 workers by default). Most of a
+run used to be spent waiting for round trips rather than moving bytes — Overijssel
+pages average ~93 KB — so a handful of workers shortens a full download markedly.
+
+```bash
+# Strictly sequential, exactly like releases before 0.3:
+uv run memories-crawl overijssel --workers 1
+
+# More parallelism – at your own risk (see below):
+uv run memories-crawl overijssel --workers 8
+```
+
+Only the image fetches are concurrent; inventory discovery, the Playwright token
+harvest and the metadata sidecars stay sequential, and files are written to fixed
+paths, so the output of a run does not depend on the worker count.
+
+**Raising `--workers` is at your own risk.** These are small public archives run on
+modest budgets, and the pool keeps a shared rate limit (the same pace as the fixed
+sleep the sequential loops used) plus a global backoff when a server answers 429 —
+a rebuff seen by one worker pauses all of them. Raising the worker count raises the
+load you put on the server; stay well below what it can take, and drop to
+`--workers 1` if you see 429s or timeouts.
 
 ---
 

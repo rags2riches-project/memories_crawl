@@ -39,12 +39,11 @@ from __future__ import annotations
 import csv
 import json
 import re
-import time
 from pathlib import Path
 
 import requests
 
-from memories_crawl import filters, paths
+from memories_crawl import download, filters, paths
 from memories_crawl.summary import PageTally, RunSummary, announce
 
 # ---------------------------------------------------------------------------
@@ -57,6 +56,9 @@ MAIS_ADT = "236"
 MAIS_VAST = "236"
 ARCHIVE = "noordholland"
 USER_AGENT = "memories-crawl/1.0"
+# Requests per second for the image fetches: the pace the old fixed
+# time.sleep(0.15) between images produced, now shared across workers.
+DOWNLOAD_RATE = 1 / 0.15
 
 # ---------------------------------------------------------------------------
 # URL builders
@@ -479,6 +481,12 @@ def _harvest_page_tokens(period_minr: int) -> list[dict]:
 # ---------------------------------------------------------------------------
 
 
+def _session() -> requests.Session:
+    s = requests.Session()
+    s.headers["User-Agent"] = USER_AGENT
+    return s
+
+
 def _download_file(session: requests.Session, url: str, dest: Path) -> str:
     if dest.exists() and dest.stat().st_size > 0:
         return "exists"
@@ -523,6 +531,7 @@ def main(
     list_invnrs: bool = False,
     csv_out: str | None = None,
     out_dir: Path | None = None,
+    workers: int = download.DEFAULT_WORKERS,
     kantoren: set[str] | None = None,
 ) -> RunSummary | None:
     kantoor_filter = filters.normalize(kantoren)
@@ -532,169 +541,178 @@ def main(
     output_dir = paths.archive_dir(ARCHIVE)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    session = requests.Session()
-    session.headers["User-Agent"] = USER_AGENT
+    downloader = download.Downloader(
+        _download_file, workers=workers, rate=DOWNLOAD_RATE, session_factory=_session
+    )
+    try:
+        # Phase 1: Discover kantoren and their MvS period sections
+        print("Discovering kantoor sections …")
+        sections = _discover_sections()
+        csv_rows: list[dict] = []
 
-    # Phase 1: Discover kantoren and their MvS period sections
-    print("Discovering kantoor sections …")
-    sections = _discover_sections()
-    csv_rows: list[dict] = []
-
-    if not sections:
-        print("ERROR: no sections found. The tree structure may have changed.")
-        return
-
-    print(f"\n{'=' * 60}")
-    print(f"Harvesting page tokens for {len(sections)} period sections")
-    print(f"{'=' * 60}")
-
-    # Sections are kantoor+period pairs, so the kantoren are counted by name.
-    summary = RunSummary(ARCHIVE, "Noord-Holland", unit_name="kantoren")
-    kantoren_seen: set[str] = set()
-
-    # done.txt records whole period sections, which is only ever accurate for
-    # an unfiltered run: under --invnr we fetch a subset, so writing the marker
-    # would make every later run skip the rest of the section.
-    filtered = invnrs is not None
-
-    done_file = paths.cache_file(ARCHIVE, "done.txt")
-    done: set[str] = set()
-    if done_file.exists() and not filtered:
-        done = set(done_file.read_text().splitlines())
-
-    def mark_done(key: str) -> None:
-        """Record a period section as fully downloaded (no-op under --invnr)."""
-        if filtered:
+        if not sections:
+            print("ERROR: no sections found. The tree structure may have changed.")
             return
-        with open(done_file, "a") as f:
-            f.write(f"{key}\n")
-
-    matched_any = False
-
-    for section_idx, section in enumerate(sections):
-        period_minr = section["period_minr"]
-        kantoor = section["kantoor"]
-        period_text = section["period_text"]
-
-        # sections.json already names every kantoor, so --kantoor resolves
-        # against the cache -- before the (Playwright) token harvest.
-        if not filters.matches(kantoor_filter, kantoor, period_minr):
-            continue
 
         print(f"\n{'=' * 60}")
-        print(f"  [{section_idx + 1}/{len(sections)}] {kantoor}: {period_text[:80]}")
-        print(f"  period_minr={period_minr}")
+        print(f"Harvesting page tokens for {len(sections)} period sections")
         print(f"{'=' * 60}")
 
-        if str(period_minr) in done:
-            # The filter did select this section -- it is simply finished, so
-            # this must not count towards the "matched nothing" warning.
-            matched_any = True
-            print("  Already fully downloaded, skipping.")
-            continue
+        # Sections are kantoor+period pairs, so the kantoren are counted by name.
+        summary = RunSummary(ARCHIVE, "Noord-Holland", unit_name="kantoren")
+        kantoren_seen: set[str] = set()
 
-        # Phase 2: Harvest all page tokens for this period
-        pages = _harvest_page_tokens(period_minr)
+        # done.txt records whole period sections, which is only ever accurate for
+        # an unfiltered run: under --invnr we fetch a subset, so writing the marker
+        # would make every later run skip the rest of the section.
+        filtered = invnrs is not None
 
-        if not pages:
-            print("  No pages found in this period")
-            mark_done(str(period_minr))
-            continue
+        done_file = paths.cache_file(ARCHIVE, "done.txt")
+        done: set[str] = set()
+        if done_file.exists() and not filtered:
+            done = set(done_file.read_text().splitlines())
 
-        # Group pages by invnr
-        invnr_pages: dict[int, list[dict]] = {}
-        invnr_texts: dict[int, str] = {}
-        for p in pages:
-            invnr_pages.setdefault(p["invnr"], []).append(p)
-            if p["invnr"] not in invnr_texts:
-                invnr_texts[p["invnr"]] = p.get("inv_text", "")
+        def mark_done(key: str) -> None:
+            """Record a period section as fully downloaded (no-op under --invnr)."""
+            if filtered:
+                return
+            with open(done_file, "a") as f:
+                f.write(f"{key}\n")
 
-        print(f"  {len(invnr_pages)} inventarisnummers with scans")
+        matched_any = False
 
-        # --invnr filter before download
-        if invnrs is not None:
-            invnr_pages = {invnr: ips for invnr, ips in invnr_pages.items() if str(invnr) in invnrs}
-            invnr_texts = {invnr: invnr_texts[invnr] for invnr in invnr_pages}
-            if not invnr_pages:
-                # The filter emptied the section, not the archive -- do not
-                # record it as done, or later runs would skip it entirely.
-                print("  No matching inventarisnummers in this period.")
+        for section_idx, section in enumerate(sections):
+            period_minr = section["period_minr"]
+            kantoor = section["kantoor"]
+            period_text = section["period_text"]
+
+            # sections.json already names every kantoor, so --kantoor resolves
+            # against the cache -- before the (Playwright) token harvest.
+            if not filters.matches(kantoor_filter, kantoor, period_minr):
                 continue
 
-        matched_any = True
+            print(f"\n{'=' * 60}")
+            print(f"  [{section_idx + 1}/{len(sections)}] {kantoor}: {period_text[:80]}")
+            print(f"  period_minr={period_minr}")
+            print(f"{'=' * 60}")
 
-        # --list-invnrs: print and skip download for this section
+            if str(period_minr) in done:
+                # The filter did select this section -- it is simply finished, so
+                # this must not count towards the "matched nothing" warning.
+                matched_any = True
+                print("  Already fully downloaded, skipping.")
+                continue
+
+            # Phase 2: Harvest all page tokens for this period
+            pages = _harvest_page_tokens(period_minr)
+
+            if not pages:
+                print("  No pages found in this period")
+                mark_done(str(period_minr))
+                continue
+
+            # Group pages by invnr
+            invnr_pages: dict[int, list[dict]] = {}
+            invnr_texts: dict[int, str] = {}
+            for p in pages:
+                invnr_pages.setdefault(p["invnr"], []).append(p)
+                if p["invnr"] not in invnr_texts:
+                    invnr_texts[p["invnr"]] = p.get("inv_text", "")
+
+            print(f"  {len(invnr_pages)} inventarisnummers with scans")
+
+            # --invnr filter before download
+            if invnrs is not None:
+                invnr_pages = {
+                    invnr: ips for invnr, ips in invnr_pages.items() if str(invnr) in invnrs
+                }
+                invnr_texts = {invnr: invnr_texts[invnr] for invnr in invnr_pages}
+                if not invnr_pages:
+                    # The filter emptied the section, not the archive -- do not
+                    # record it as done, or later runs would skip it entirely.
+                    print("  No matching inventarisnummers in this period.")
+                    continue
+
+            matched_any = True
+
+            # --list-invnrs: print and skip download for this section
+            if list_invnrs:
+                print(f"\n  {kantoor} – {period_text[:60]}:")
+                print(f"    {'invnr':>6}  {'description':<30}  pages")
+                print(f"    {'------':>6}  {'----------------------------':<30}  -----")
+                for invnr in sorted(invnr_pages.keys()):
+                    desc = invnr_texts.get(invnr, "")[:30]
+                    print(f"    {invnr:>6}  {desc:<30}  {len(invnr_pages[invnr]):>5}")
+                    csv_rows.append(
+                        {
+                            "kantoor": kantoor,
+                            "period": period_text[:60],
+                            "invnr": invnr,
+                            "description": invnr_texts.get(invnr, ""),
+                            "pages": len(invnr_pages[invnr]),
+                        }
+                    )
+                continue
+
+            announce(sum(len(v) for v in invnr_pages.values()), len(invnr_pages), kantoor)
+            kantoren_seen.add(kantoor)
+            summary.units = len(kantoren_seen)
+            summary.registers += len(invnr_pages)
+
+            section_tally = PageTally()
+            for invnr, inv_pages in sorted(invnr_pages.items()):
+                inv_text = invnr_texts.get(invnr, "")
+                # Clean kantoor name for folder use
+                safe_kantoor = kantoor.replace(". ", "_").replace(" ", "_")[:60]
+                dest_dir = output_dir / safe_kantoor / f"{invnr:04d}"
+                print(f"  invnr {invnr} ({inv_text[:40].strip()}) …", end=" ", flush=True)
+
+                _write_metadata(dest_dir, kantoor, invnr, inv_text, len(inv_pages))
+
+                jobs = [
+                    download.Job(_fullsize_url(p["thumb_url"]), dest_dir / f"{p['page']:04d}.jpg")
+                    for p in sorted(inv_pages, key=lambda x: x["page"])
+                ]
+                tally = PageTally()
+
+                def record_page(job: download.Job, status: str) -> None:
+                    tally.record(status, job.dest)
+                    summary.pages.record(status, job.dest)
+
+                downloader.run(jobs, on_result=record_page)
+
+                print(tally.describe(len(inv_pages)))
+
+                # Fold in per register, not per section, so a run that dies midway
+                # still reports everything it downloaded.
+                section_tally += tally
+
+            print(f"  Section totals: {section_tally.describe()}")
+
+            mark_done(str(period_minr))
+
+        if (filtered or kantoor_filter is not None) and not matched_any:
+            print(
+                f"\nWARNING: {filters.describe(invnrs, kantoren)} matched no "
+                f"inventarisnummer in any of the {len(sections)} period sections."
+            )
+
         if list_invnrs:
-            print(f"\n  {kantoor} – {period_text[:60]}:")
-            print(f"    {'invnr':>6}  {'description':<30}  pages")
-            print(f"    {'------':>6}  {'----------------------------':<30}  -----")
-            for invnr in sorted(invnr_pages.keys()):
-                desc = invnr_texts.get(invnr, "")[:30]
-                print(f"    {invnr:>6}  {desc:<30}  {len(invnr_pages[invnr]):>5}")
-                csv_rows.append(
-                    {
-                        "kantoor": kantoor,
-                        "period": period_text[:60],
-                        "invnr": invnr,
-                        "description": invnr_texts.get(invnr, ""),
-                        "pages": len(invnr_pages[invnr]),
-                    }
-                )
-            continue
+            print()
+            if csv_out and csv_rows:
+                with open(csv_out, "w", newline="", encoding="utf-8") as f:
+                    writer = csv.DictWriter(
+                        f, fieldnames=["kantoor", "period", "invnr", "description", "pages"]
+                    )
+                    writer.writeheader()
+                    writer.writerows(csv_rows)
+                print(f"Wrote {len(csv_rows)} rows to {csv_out}\n")
+            return
 
-        announce(sum(len(v) for v in invnr_pages.values()), len(invnr_pages), kantoor)
-        kantoren_seen.add(kantoor)
-        summary.units = len(kantoren_seen)
-        summary.registers += len(invnr_pages)
-
-        section_tally = PageTally()
-        for invnr, inv_pages in sorted(invnr_pages.items()):
-            inv_text = invnr_texts.get(invnr, "")
-            # Clean kantoor name for folder use
-            safe_kantoor = kantoor.replace(". ", "_").replace(" ", "_")[:60]
-            dest_dir = output_dir / safe_kantoor / f"{invnr:04d}"
-            print(f"  invnr {invnr} ({inv_text[:40].strip()}) …", end=" ", flush=True)
-
-            _write_metadata(dest_dir, kantoor, invnr, inv_text, len(inv_pages))
-
-            tally = PageTally()
-            for p in sorted(inv_pages, key=lambda x: x["page"]):
-                url = _fullsize_url(p["thumb_url"])
-                dest = dest_dir / f"{p['page']:04d}.jpg"
-                tally.record(_download_file(session, url, dest), dest)
-                time.sleep(0.15)
-
-            print(tally.describe(len(inv_pages)))
-
-            # Fold in per register, not per section, so a run that dies midway
-            # still reports everything it downloaded.
-            section_tally += tally
-            summary.pages += tally
-
-        print(f"  Section totals: {section_tally.describe()}")
-
-        mark_done(str(period_minr))
-
-    if (filtered or kantoor_filter is not None) and not matched_any:
-        print(
-            f"\nWARNING: {filters.describe(invnrs, kantoren)} matched no "
-            f"inventarisnummer in any of the {len(sections)} period sections."
-        )
-
-    if list_invnrs:
-        print()
-        if csv_out and csv_rows:
-            with open(csv_out, "w", newline="", encoding="utf-8") as f:
-                writer = csv.DictWriter(
-                    f, fieldnames=["kantoor", "period", "invnr", "description", "pages"]
-                )
-                writer.writeheader()
-                writer.writerows(csv_rows)
-            print(f"Wrote {len(csv_rows)} rows to {csv_out}\n")
-        return
-
-    summary.report()
-    return summary
+        summary.report()
+        return summary
+    finally:
+        downloader.close()
 
 
 if __name__ == "__main__":

@@ -36,12 +36,11 @@ from __future__ import annotations
 import csv
 import json
 import re
-import time
 from pathlib import Path
 
 import requests
 
-from memories_crawl import filters, paths
+from memories_crawl import download, filters, paths
 from memories_crawl.summary import PageTally, RunSummary, announce
 
 ARCHIVE_NAME = "Historisch Centrum Overijssel"
@@ -51,6 +50,9 @@ MAIS_VAST = "20"
 IMAGE_BASE = "https://preserve2.archieven.nl/mi-20/fonc-hco/0136.4"
 ARCHIVE = "overijssel"
 USER_AGENT = "memories-crawl/1.0"
+# Requests per second for the image fetches: the pace the old fixed
+# time.sleep(0.15) between images produced, now shared across workers.
+DOWNLOAD_RATE = 1 / 0.15
 
 # minr values for each kantoor's "Memories van Successie" item in the MAIS tree.
 # These were discovered by browsing the collectieoverijssel.nl inv3 tree for
@@ -287,6 +289,12 @@ def _image_url(invnr: int, page: int, miahd: int, rdt: str, open_token: str) -> 
     )
 
 
+def _session() -> requests.Session:
+    s = requests.Session()
+    s.headers["User-Agent"] = USER_AGENT
+    return s
+
+
 def _download_file(session: requests.Session, url: str, dest: Path) -> str:
     if dest.exists() and dest.stat().st_size > 0:
         return "exists"
@@ -323,6 +331,7 @@ def main(
     list_invnrs: bool = False,
     csv_out: str | None = None,
     out_dir: Path | None = None,
+    workers: int = download.DEFAULT_WORKERS,
     kantoren: set[str] | None = None,
 ) -> RunSummary | None:
     kantoor_filter = filters.normalize(kantoren)
@@ -332,99 +341,111 @@ def main(
     output_dir = paths.archive_dir(ARCHIVE)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    session = requests.Session()
-    session.headers["User-Agent"] = USER_AGENT
+    downloader = download.Downloader(
+        _download_file, workers=workers, rate=DOWNLOAD_RATE, session_factory=_session
+    )
+    try:
+        csv_rows: list[dict] = []
+        summary = RunSummary(ARCHIVE, "Overijssel", unit_name="kantoren")
+        matched_any = False
 
-    csv_rows: list[dict] = []
-    summary = RunSummary(ARCHIVE, "Overijssel", unit_name="kantoren")
-    matched_any = False
+        for kantoor, minr in KANTOOR_MINR.items():
+            # Both filters are applied before the Playwright harvest: --kantoor by
+            # name or minr, --invnr through the kantoor's token cache where one
+            # exists (a missing cache proves nothing, so that kantoor is visited).
+            if not filters.matches(kantoor_filter, kantoor, minr):
+                continue
+            if invnrs is not None and _cached_kantoor_holds(minr, invnrs) is False:
+                continue
 
-    for kantoor, minr in KANTOOR_MINR.items():
-        # Both filters are applied before the Playwright harvest: --kantoor by
-        # name or minr, --invnr through the kantoor's token cache where one
-        # exists (a missing cache proves nothing, so that kantoor is visited).
-        if not filters.matches(kantoor_filter, kantoor, minr):
-            continue
-        if invnrs is not None and _cached_kantoor_holds(minr, invnrs) is False:
-            continue
+            print(f"\n  {kantoor} (minr={minr}): fetching page tokens via Playwright …")
+            pages = _fetch_page_tokens_via_playwright(minr)
 
-        print(f"\n  {kantoor} (minr={minr}): fetching page tokens via Playwright …")
-        pages = _fetch_page_tokens_via_playwright(minr)
+            if not pages:
+                print(f"    WARNING: no pages found for {kantoor}")
+                continue
 
-        if not pages:
-            print(f"    WARNING: no pages found for {kantoor}")
-            continue
+            # Group by invnr to write per-invnr metadata
+            invnr_pages: dict[int, list[dict]] = {}
+            for p in pages:
+                invnr_pages.setdefault(p["invnr"], []).append(p)
 
-        # Group by invnr to write per-invnr metadata
-        invnr_pages: dict[int, list[dict]] = {}
-        for p in pages:
-            invnr_pages.setdefault(p["invnr"], []).append(p)
+            # --invnr filter before download
+            if invnrs is not None:
+                invnr_pages = {
+                    invnr: ips for invnr, ips in invnr_pages.items() if str(invnr) in invnrs
+                }
 
-        # --invnr filter before download
-        if invnrs is not None:
-            invnr_pages = {invnr: ips for invnr, ips in invnr_pages.items() if str(invnr) in invnrs}
+            if invnr_pages:
+                matched_any = True
 
-        if invnr_pages:
-            matched_any = True
+            # --list-invnrs: print and skip download for this kantoor
+            if list_invnrs:
+                print(f"\n{kantoor}:")
+                print(f"  {'invnr':>6}  pages")
+                print(f"  {'------':>6}  -----")
+                for invnr in sorted(invnr_pages.keys()):
+                    print(f"  {invnr:>6}  {len(invnr_pages[invnr]):>5}")
+                    csv_rows.append(
+                        {
+                            "kantoor": kantoor,
+                            "invnr": invnr,
+                            "pages": len(invnr_pages[invnr]),
+                        }
+                    )
+                continue
 
-        # --list-invnrs: print and skip download for this kantoor
+            n_pages = sum(len(v) for v in invnr_pages.values())
+            announce(n_pages, len(invnr_pages), kantoor, indent="    ")
+            summary.units += 1
+            summary.registers += len(invnr_pages)
+
+            kantoor_tally = PageTally()
+            for invnr, inv_pages in sorted(invnr_pages.items()):
+                dest_dir = output_dir / kantoor / str(invnr)
+                _write_metadata(dest_dir, kantoor, invnr, len(inv_pages))
+                jobs = [
+                    download.Job(
+                        _image_url(invnr, p["page"], p["miahd"], p["rdt"], p["open"]),
+                        dest_dir / f"{p['page']:04d}.jpg",
+                    )
+                    for p in inv_pages
+                ]
+                tally = PageTally()
+
+                def record_page(job: download.Job, status: str) -> None:
+                    tally.record(status, job.dest)
+                    summary.pages.record(status, job.dest)
+
+                downloader.run(jobs, on_result=record_page)
+
+                print(f"    invnr {invnr} {tally.describe(len(inv_pages))}", flush=True)
+                # Fold in per register, not per kantoor, so a run that dies midway
+                # still reports everything it downloaded.
+                kantoor_tally += tally
+
+            print(f"    {kantoor}: {kantoor_tally.describe()}")
+
+        if (invnrs is not None or kantoor_filter is not None) and not matched_any:
+            print(
+                f"\nWARNING: {filters.describe(invnrs, kantoren)} matched no "
+                f"inventarisnummer in any of the {len(KANTOOR_MINR)} kantoren."
+            )
+
         if list_invnrs:
-            print(f"\n{kantoor}:")
-            print(f"  {'invnr':>6}  pages")
-            print(f"  {'------':>6}  -----")
-            for invnr in sorted(invnr_pages.keys()):
-                print(f"  {invnr:>6}  {len(invnr_pages[invnr]):>5}")
-                csv_rows.append(
-                    {
-                        "kantoor": kantoor,
-                        "invnr": invnr,
-                        "pages": len(invnr_pages[invnr]),
-                    }
-                )
-            continue
+            print()
+            if csv_out and csv_rows:
+                with open(csv_out, "w", newline="", encoding="utf-8") as f:
+                    writer = csv.DictWriter(f, fieldnames=["kantoor", "invnr", "pages"])
+                    writer.writeheader()
+                    writer.writerows(csv_rows)
+                print(f"Wrote {len(csv_rows)} rows to {csv_out}\n")
+            return
 
-        n_pages = sum(len(v) for v in invnr_pages.values())
-        announce(n_pages, len(invnr_pages), kantoor, indent="    ")
-        summary.units += 1
-        summary.registers += len(invnr_pages)
-
-        kantoor_tally = PageTally()
-        for invnr, inv_pages in sorted(invnr_pages.items()):
-            dest_dir = output_dir / kantoor / str(invnr)
-            _write_metadata(dest_dir, kantoor, invnr, len(inv_pages))
-            tally = PageTally()
-            for p in inv_pages:
-                dest = dest_dir / f"{p['page']:04d}.jpg"
-                url = _image_url(invnr, p["page"], p["miahd"], p["rdt"], p["open"])
-                tally.record(_download_file(session, url, dest), dest)
-                time.sleep(0.15)
-
-            print(f"    invnr {invnr} {tally.describe(len(inv_pages))}", flush=True)
-            # Fold in per register, not per kantoor, so a run that dies midway
-            # still reports everything it downloaded.
-            kantoor_tally += tally
-            summary.pages += tally
-
-        print(f"    {kantoor}: {kantoor_tally.describe()}")
-
-    if (invnrs is not None or kantoor_filter is not None) and not matched_any:
-        print(
-            f"\nWARNING: {filters.describe(invnrs, kantoren)} matched no "
-            f"inventarisnummer in any of the {len(KANTOOR_MINR)} kantoren."
-        )
-
-    if list_invnrs:
-        print()
-        if csv_out and csv_rows:
-            with open(csv_out, "w", newline="", encoding="utf-8") as f:
-                writer = csv.DictWriter(f, fieldnames=["kantoor", "invnr", "pages"])
-                writer.writeheader()
-                writer.writerows(csv_rows)
-            print(f"Wrote {len(csv_rows)} rows to {csv_out}\n")
-        return
-
-    summary.report()
-    return summary
+        summary.report()
+        return summary
+    finally:
+        downloader.close()
 
 
 if __name__ == "__main__":

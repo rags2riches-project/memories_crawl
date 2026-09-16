@@ -24,7 +24,7 @@ from pathlib import Path
 
 import requests
 
-from memories_crawl import filters, paths, regcache
+from memories_crawl import download, filters, paths, regcache
 from memories_crawl.summary import PageTally, RunSummary
 
 ACCESS_NUMBER = "3.06.05"
@@ -314,6 +314,7 @@ def main(
     list_invnrs: bool = False,
     csv_out: str | None = None,
     out_dir: Path | None = None,
+    workers: int = download.DEFAULT_WORKERS,
     refresh_cache: bool = False,
 ) -> RunSummary | None:
     if out_dir is not None:
@@ -321,90 +322,99 @@ def main(
     output_dir = paths.archive_dir(ARCHIVE)
 
     session = _session()
-    output_dir.mkdir(parents=True, exist_ok=True)
+    downloader = download.Downloader(_download_file, workers=workers, session_factory=_session)
+    try:
+        output_dir.mkdir(parents=True, exist_ok=True)
 
-    print("Fetching inventory numbers from EAD XML …")
-    inv_numbers = _fetch_inventory_numbers(session, refresh_cache=refresh_cache)
-    print(f"Found {len(inv_numbers)} inventory items: {inv_numbers[0]}–{inv_numbers[-1]}")
+        print("Fetching inventory numbers from EAD XML …")
+        inv_numbers = _fetch_inventory_numbers(session, refresh_cache=refresh_cache)
+        print(f"Found {len(inv_numbers)} inventory items: {inv_numbers[0]}–{inv_numbers[-1]}")
 
-    if invnrs is not None:
-        inv_numbers = [n for n in inv_numbers if str(n) in invnrs]
-        print(f"Filtered to {len(inv_numbers)} inventory numbers matching --invnr.")
-        if not inv_numbers:
-            print(
-                f"\nWARNING: {filters.describe(invnrs)} matched no "
-                "inventarisnummer in access 3.06.05."
-            )
+        if invnrs is not None:
+            inv_numbers = [n for n in inv_numbers if str(n) in invnrs]
+            print(f"Filtered to {len(inv_numbers)} inventory numbers matching --invnr.")
+            if not inv_numbers:
+                print(
+                    f"\nWARNING: {filters.describe(invnrs)} matched no "
+                    "inventarisnummer in access 3.06.05."
+                )
 
-    if list_invnrs:
-        _list_inventory(inv_numbers, csv_out=csv_out)
-        return
+        if list_invnrs:
+            _list_inventory(inv_numbers, csv_out=csv_out)
+            return
 
-    # Access 3.06.05 is a flat run of inventarisnummers: no kantoor layer.
-    summary = RunSummary(ARCHIVE, "Zuid-Holland (Nationaal Archief)", unit_name=None)
+        # Access 3.06.05 is a flat run of inventarisnummers: no kantoor layer.
+        summary = RunSummary(ARCHIVE, "Zuid-Holland (Nationaal Archief)", unit_name=None)
 
-    done_file = paths.cache_file(
-        ARCHIVE, "nationaalarchief_done.txt", legacy=Path("nationaalarchief_done.txt")
-    )
-    done: set[str] = set()
-    if done_file.exists():
-        done = set(done_file.read_text().splitlines())
+        done_file = paths.cache_file(
+            ARCHIVE, "nationaalarchief_done.txt", legacy=Path("nationaalarchief_done.txt")
+        )
+        done: set[str] = set()
+        if done_file.exists():
+            done = set(done_file.read_text().splitlines())
 
-    for invnr in inv_numbers:
-        key = str(invnr)
-        if key in done:
-            continue
-
-        dest_dir = output_dir / key
-        print(f"  invnr {invnr} …", end=" ", flush=True)
-
-        url = VIEWER_URL_TPL.format(invnr=invnr)
-        resp = session.get(url, timeout=60)
-        if resp.status_code == 404:
-            print("404 – skipped")
-            with open(done_file, "a") as f:
-                f.write(key + "\n")
-            time.sleep(0.5)
-            continue
-        resp.raise_for_status()
-        html = resp.text
-
-        scans = _extract_scans_from_viewer(html)
-        if not scans:
-            print("no scans found")
-            with open(done_file, "a") as f:
-                f.write(key + "\n")
-            time.sleep(0.5)
-            continue
-
-        _write_metadata(dest_dir, invnr, html, scans)
-        # The viewer page lists every scan, so the size of this register is
-        # known before the first image is fetched.
-        print(f"{len(scans)} scans …", end=" ", flush=True)
-        summary.registers += 1
-
-        tally = PageTally()
-        for scan in scans:
-            label = scan.get("label") or f"{invnr}_{scan.get('order', 0):04d}.jpg"
-            default = scan.get("default") or {}
-            download_url = default.get("url") or ""
-            if not download_url:
-                scan_id = scan.get("id") or scan.get("uuid") or ""
-                if scan_id:
-                    download_url = f"https://service.archief.nl/api/file/v1/default/{scan_id}"
-            if not download_url:
+        for invnr in inv_numbers:
+            key = str(invnr)
+            if key in done:
                 continue
-            dest = dest_dir / label
-            tally.record(_download_file(session, download_url, dest), dest)
 
-        print(tally.describe(len(scans)))
-        summary.pages += tally
-        with open(done_file, "a") as f:
-            f.write(key + "\n")
-        time.sleep(1.0)
+            dest_dir = output_dir / key
+            print(f"  invnr {invnr} …", end=" ", flush=True)
 
-    summary.report()
-    return summary
+            url = VIEWER_URL_TPL.format(invnr=invnr)
+            resp = session.get(url, timeout=60)
+            if resp.status_code == 404:
+                print("404 – skipped")
+                with open(done_file, "a") as f:
+                    f.write(key + "\n")
+                time.sleep(0.5)
+                continue
+            resp.raise_for_status()
+            html = resp.text
+
+            scans = _extract_scans_from_viewer(html)
+            if not scans:
+                print("no scans found")
+                with open(done_file, "a") as f:
+                    f.write(key + "\n")
+                time.sleep(0.5)
+                continue
+
+            _write_metadata(dest_dir, invnr, html, scans)
+            # The viewer page lists every scan, so the size of this register is
+            # known before the first image is fetched.
+            print(f"{len(scans)} scans …", end=" ", flush=True)
+            summary.registers += 1
+
+            jobs: list[download.Job] = []
+            tally = PageTally()
+            for scan in scans:
+                label = scan.get("label") or f"{invnr}_{scan.get('order', 0):04d}.jpg"
+                default = scan.get("default") or {}
+                download_url = default.get("url") or ""
+                if not download_url:
+                    scan_id = scan.get("id") or scan.get("uuid") or ""
+                    if scan_id:
+                        download_url = f"https://service.archief.nl/api/file/v1/default/{scan_id}"
+                if not download_url:
+                    continue
+                jobs.append(download.Job(download_url, dest_dir / label))
+
+            def record_page(job: download.Job, status: str) -> None:
+                tally.record(status, job.dest)
+                summary.pages.record(status, job.dest)
+
+            downloader.run(jobs, on_result=record_page)
+
+            print(tally.describe(len(scans)))
+            with open(done_file, "a") as f:
+                f.write(key + "\n")
+            time.sleep(1.0)
+
+        summary.report()
+        return summary
+    finally:
+        downloader.close()
 
 
 if __name__ == "__main__":

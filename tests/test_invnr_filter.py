@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import pytest
 
-from memories_crawl import gelderland, noordholland, paths, zeeland
+from memories_crawl import download, gelderland, noordholland, paths, zeeland
 
 # Two units; the first holds two inventarisnummers so that "the filter picked
 # one of several in this unit" is exercised.
@@ -67,7 +67,8 @@ def h(monkeypatch, tmp_path):
 
     for mod in (gelderland, noordholland, zeeland):
         monkeypatch.setattr(mod, "_download_file", fake_download)
-        monkeypatch.setattr(mod.time, "sleep", lambda *_: None)
+    # The pacing between image fetches now lives in the shared download pool.
+    monkeypatch.setattr(download.time, "sleep", lambda *_: None)
 
     def harvest(unit: str, items: list[dict] | None, write_cache: bool) -> list[dict]:
         harness.harvest_calls.append({"unit": unit, "write_cache": write_cache})

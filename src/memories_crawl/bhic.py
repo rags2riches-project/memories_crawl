@@ -41,7 +41,7 @@ from pathlib import Path
 
 import requests
 
-from memories_crawl import filters, paths, regcache
+from memories_crawl import download, filters, paths, regcache
 from memories_crawl.summary import PageTally, RunSummary
 
 API_BASE = "https://webservices.memorix.nl/genealogy"
@@ -329,6 +329,7 @@ def main(
     list_invnrs: bool = False,
     csv_out: str | None = None,
     out_dir: Path | None = None,
+    workers: int = download.DEFAULT_WORKERS,
     kantoren: set[str] | None = None,
     refresh_cache: bool = False,
 ) -> RunSummary | None:
@@ -339,139 +340,150 @@ def main(
     paths.archive_dir(ARCHIVE).mkdir(parents=True, exist_ok=True)
 
     session = _session()
-
-    print("Collecting BHIC Memorie van Successie registers …")
-    registers = _load_registers(session, invnrs=invnrs, refresh_cache=refresh_cache)
-    if kantoor_filter is not None:
-        registers = [
-            r
-            for r in registers
-            if filters.matches(
-                kantoor_filter,
-                (r.get("metadata") or {}).get("gemeente") or "",
-                (r.get("metadata") or {}).get("code") or "",
-            )
-        ]
-    if invnrs is not None or kantoor_filter is not None:
-        print(
-            f"Filtered to {len(registers)} registers matching {filters.describe(invnrs, kantoren)}."
-        )
-        if not registers:
+    downloader = download.Downloader(_download_file, workers=workers, session_factory=_session)
+    try:
+        print("Collecting BHIC Memorie van Successie registers …")
+        registers = _load_registers(session, invnrs=invnrs, refresh_cache=refresh_cache)
+        if kantoor_filter is not None:
+            registers = [
+                r
+                for r in registers
+                if filters.matches(
+                    kantoor_filter,
+                    (r.get("metadata") or {}).get("gemeente") or "",
+                    (r.get("metadata") or {}).get("code") or "",
+                )
+            ]
+        if invnrs is not None or kantoor_filter is not None:
             print(
-                f"\nWARNING: {filters.describe(invnrs, kantoren)} matched no "
-                "register in the BHIC collection."
+                f"Filtered to {len(registers)} registers matching "
+                f"{filters.describe(invnrs, kantoren)}."
             )
-    else:
-        print(f"Found {len(registers)} registers.")
-
-    if list_invnrs:
-        _list_registers(registers, csv_out=csv_out)
-        return
-
-    # Registers are grouped by gemeente here; the archive has no kantoor layer.
-    summary = RunSummary(ARCHIVE, "Noord-Brabant (BHIC)", unit_name="gemeenten")
-    gemeenten_seen: set[str] = set()
-
-    done = _load_done()
-    progress_csv = _progress_csv()
-    write_header = not progress_csv.exists() or progress_csv.stat().st_size == 0
-    with open(progress_csv, "a", newline="", encoding="utf-8") as progress:
-        writer = csv.DictWriter(
-            progress, fieldnames=["register_id", "gemeente", "invnr", "status", "n_scans"]
-        )
-        if write_header:
-            writer.writeheader()
-            progress.flush()
-
-        for idx, reg in enumerate(registers, start=1):
-            reg_id = reg.get("id") or ""
-            md = reg.get("metadata") or {}
-            gemeente = md.get("gemeente") or "?"
-            invnr = md.get("inventarisnummer") or "?"
-
-            if not reg_id or reg_id in done:
-                continue
-            if _is_tafel(reg):
-                writer.writerow(
-                    {
-                        "register_id": reg_id,
-                        "gemeente": gemeente,
-                        "invnr": invnr,
-                        "status": "skipped_tafel",
-                        "n_scans": 0,
-                    }
+            if not registers:
+                print(
+                    f"\nWARNING: {filters.describe(invnrs, kantoren)} matched no "
+                    "register in the BHIC collection."
                 )
+        else:
+            print(f"Found {len(registers)} registers.")
+
+        if list_invnrs:
+            _list_registers(registers, csv_out=csv_out)
+            return
+
+        # Registers are grouped by gemeente here; the archive has no kantoor layer.
+        summary = RunSummary(ARCHIVE, "Noord-Brabant (BHIC)", unit_name="gemeenten")
+        gemeenten_seen: set[str] = set()
+
+        done = _load_done()
+        progress_csv = _progress_csv()
+        write_header = not progress_csv.exists() or progress_csv.stat().st_size == 0
+        with open(progress_csv, "a", newline="", encoding="utf-8") as progress:
+            writer = csv.DictWriter(
+                progress, fieldnames=["register_id", "gemeente", "invnr", "status", "n_scans"]
+            )
+            if write_header:
+                writer.writeheader()
                 progress.flush()
-                continue
 
-            dest_dir = _register_dir(reg)
-            print(f"[{idx}/{len(registers)}] {gemeente} deel {invnr} → {dest_dir} …", flush=True)
+            for idx, reg in enumerate(registers, start=1):
+                reg_id = reg.get("id") or ""
+                md = reg.get("metadata") or {}
+                gemeente = md.get("gemeente") or "?"
+                invnr = md.get("inventarisnummer") or "?"
 
-            _write_register_metadata(dest_dir, reg)
-
-            # Pull all deeds + persons for the genealogical sidecar.
-            deeds: list[dict] = []
-            try:
-                deeds = _paginate(session, "/deed", f"register_id:{reg_id}", "deed")
-                persons = _paginate(session, "/person", f"register_id:{reg_id}", "person")
-                _write_deeds_sidecar(dest_dir, deeds, persons)
-                summary.records += len(deeds)
-            except Exception as exc:
-                print(f"      WARN: deeds/persons fetch failed: {exc}", flush=True)
-
-            # Page through assets and download each scan.
-            try:
-                assets = _paginate(session, "/asset", f"register_id:{reg_id}", "asset")
-            except Exception as exc:
-                print(f"      ERROR: asset listing failed: {exc}", flush=True)
-                writer.writerow(
-                    {
-                        "register_id": reg_id,
-                        "gemeente": gemeente,
-                        "invnr": invnr,
-                        "status": "asset_list_failed",
-                        "n_scans": 0,
-                    }
-                )
-                progress.flush()
-                continue
-
-            print(f"      {len(deeds)} memories, {len(assets)} scans …", flush=True)
-
-            tally = PageTally()
-            for asset in assets:
-                # Prefer the explicit asset-search "download" URL; fall back to
-                # building one from the file_id if missing.
-                url = asset.get("download") or ""
-                file_id = asset.get("file_id") or ""
-                if not url and file_id:
-                    url = f"https://images.memorix.nl/bhic/download/fullsize/{file_id}.jpg"
-                if not url:
+                if not reg_id or reg_id in done:
                     continue
-                dest = dest_dir / _asset_filename(asset)
-                tally.record(_download_file(session, url, dest), dest)
+                if _is_tafel(reg):
+                    writer.writerow(
+                        {
+                            "register_id": reg_id,
+                            "gemeente": gemeente,
+                            "invnr": invnr,
+                            "status": "skipped_tafel",
+                            "n_scans": 0,
+                        }
+                    )
+                    progress.flush()
+                    continue
 
-            n_done = tally.downloaded + tally.skipped
-            writer.writerow(
-                {
-                    "register_id": reg_id,
-                    "gemeente": gemeente,
-                    "invnr": invnr,
-                    "status": "done",
-                    "n_scans": n_done,
-                }
-            )
-            progress.flush()
-            print(f"      ✓ {tally.describe(len(assets))}", flush=True)
+                dest_dir = _register_dir(reg)
+                print(
+                    f"[{idx}/{len(registers)}] {gemeente} deel {invnr} → {dest_dir} …", flush=True
+                )
 
-            gemeenten_seen.add(gemeente)
-            summary.units = len(gemeenten_seen)
-            summary.registers += 1
-            summary.pages += tally
-            time.sleep(REQUEST_SLEEP)
+                _write_register_metadata(dest_dir, reg)
 
-    summary.report()
-    return summary
+                # Pull all deeds + persons for the genealogical sidecar.
+                deeds: list[dict] = []
+                try:
+                    deeds = _paginate(session, "/deed", f"register_id:{reg_id}", "deed")
+                    persons = _paginate(session, "/person", f"register_id:{reg_id}", "person")
+                    _write_deeds_sidecar(dest_dir, deeds, persons)
+                    summary.records += len(deeds)
+                except Exception as exc:
+                    print(f"      WARN: deeds/persons fetch failed: {exc}", flush=True)
+
+                # Page through assets and download each scan.
+                try:
+                    assets = _paginate(session, "/asset", f"register_id:{reg_id}", "asset")
+                except Exception as exc:
+                    print(f"      ERROR: asset listing failed: {exc}", flush=True)
+                    writer.writerow(
+                        {
+                            "register_id": reg_id,
+                            "gemeente": gemeente,
+                            "invnr": invnr,
+                            "status": "asset_list_failed",
+                            "n_scans": 0,
+                        }
+                    )
+                    progress.flush()
+                    continue
+
+                jobs: list[download.Job] = []
+                print(f"      {len(deeds)} memories, {len(assets)} scans …", flush=True)
+
+                tally = PageTally()
+                for asset in assets:
+                    # Prefer the explicit asset-search "download" URL; fall back to
+                    # building one from the file_id if missing.
+                    url = asset.get("download") or ""
+                    file_id = asset.get("file_id") or ""
+                    if not url and file_id:
+                        url = f"https://images.memorix.nl/bhic/download/fullsize/{file_id}.jpg"
+                    if not url:
+                        continue
+                    jobs.append(download.Job(url, dest_dir / _asset_filename(asset)))
+
+                def record_page(job: download.Job, status: str) -> None:
+                    tally.record(status, job.dest)
+                    summary.pages.record(status, job.dest)
+
+                downloader.run(jobs, on_result=record_page)
+
+                n_done = tally.downloaded + tally.skipped
+                writer.writerow(
+                    {
+                        "register_id": reg_id,
+                        "gemeente": gemeente,
+                        "invnr": invnr,
+                        "status": "done",
+                        "n_scans": n_done,
+                    }
+                )
+                progress.flush()
+                print(f"      ✓ {tally.describe(len(assets))}", flush=True)
+
+                gemeenten_seen.add(gemeente)
+                summary.units = len(gemeenten_seen)
+                summary.registers += 1
+                time.sleep(REQUEST_SLEEP)
+
+        summary.report()
+        return summary
+    finally:
+        downloader.close()
 
 
 if __name__ == "__main__":

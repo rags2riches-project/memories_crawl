@@ -24,7 +24,7 @@ import argparse
 import sys
 from pathlib import Path
 
-from memories_crawl import paths
+from memories_crawl import download, paths
 from memories_crawl.summary import RunSummary, collect, grand_total
 
 
@@ -33,6 +33,7 @@ def _run_friesland(
     list_invnrs: bool = False,
     csv_out: str | None = None,
     out_dir: Path | None = None,
+    workers: int = download.DEFAULT_WORKERS,
     kantoren: set[str] | None = None,
     refresh_cache: bool = False,
 ) -> RunSummary | None:
@@ -44,6 +45,7 @@ def _run_friesland(
         list_invnrs=list_invnrs,
         csv_out=csv_out,
         out_dir=out_dir,
+        workers=workers,
         kantoren=kantoren,
         refresh_cache=refresh_cache,
     )
@@ -54,6 +56,7 @@ def _run_nationaalarchief(
     list_invnrs: bool = False,
     csv_out: str | None = None,
     out_dir: Path | None = None,
+    workers: int = download.DEFAULT_WORKERS,
     kantoren: set[str] | None = None,
     refresh_cache: bool = False,
 ) -> RunSummary | None:
@@ -70,6 +73,7 @@ def _run_nationaalarchief(
         list_invnrs=list_invnrs,
         csv_out=csv_out,
         out_dir=out_dir,
+        workers=workers,
         refresh_cache=refresh_cache,
     )
 
@@ -79,6 +83,7 @@ def _run_drentsarchief(
     list_invnrs: bool = False,
     csv_out: str | None = None,
     out_dir: Path | None = None,
+    workers: int = download.DEFAULT_WORKERS,
     kantoren: set[str] | None = None,
     refresh_cache: bool = False,
 ) -> RunSummary | None:
@@ -90,6 +95,7 @@ def _run_drentsarchief(
         list_invnrs=list_invnrs,
         csv_out=csv_out,
         out_dir=out_dir,
+        workers=workers,
         kantoren=kantoren,
         refresh_cache=refresh_cache,
     )
@@ -100,6 +106,7 @@ def _run_bhic(
     list_invnrs: bool = False,
     csv_out: str | None = None,
     out_dir: Path | None = None,
+    workers: int = download.DEFAULT_WORKERS,
     kantoren: set[str] | None = None,
     refresh_cache: bool = False,
 ) -> RunSummary | None:
@@ -111,6 +118,7 @@ def _run_bhic(
         list_invnrs=list_invnrs,
         csv_out=csv_out,
         out_dir=out_dir,
+        workers=workers,
         kantoren=kantoren,
         refresh_cache=refresh_cache,
     )
@@ -121,6 +129,7 @@ def _run_overijssel(
     list_invnrs: bool = False,
     csv_out: str | None = None,
     out_dir: Path | None = None,
+    workers: int = download.DEFAULT_WORKERS,
     kantoren: set[str] | None = None,
 ) -> RunSummary | None:
     print("=== Overijssel pipeline (INCOMPLETE – see python/overijssel.py) ===")
@@ -131,6 +140,7 @@ def _run_overijssel(
         list_invnrs=list_invnrs,
         csv_out=csv_out,
         out_dir=out_dir,
+        workers=workers,
         kantoren=kantoren,
     )
 
@@ -140,6 +150,7 @@ def _run_utrechtsarchief(
     list_invnrs: bool = False,
     csv_out: str | None = None,
     out_dir: Path | None = None,
+    workers: int = download.DEFAULT_WORKERS,
     kantoren: set[str] | None = None,
 ) -> RunSummary | None:
     print("=== Utrechts Archief pipeline ===")
@@ -150,6 +161,7 @@ def _run_utrechtsarchief(
         list_invnrs=list_invnrs,
         csv_out=csv_out,
         out_dir=out_dir,
+        workers=workers,
         kantoren=kantoren,
     )
 
@@ -159,6 +171,7 @@ def _run_limburg(
     list_invnrs: bool = False,
     csv_out: str | None = None,
     out_dir: Path | None = None,
+    workers: int = download.DEFAULT_WORKERS,
     kantoren: set[str] | None = None,
 ) -> RunSummary | None:
     print("=== Limburg pipeline (RHCL, archieven.nl MAIS) ===")
@@ -169,6 +182,7 @@ def _run_limburg(
         list_invnrs=list_invnrs,
         csv_out=csv_out,
         out_dir=out_dir,
+        workers=workers,
         kantoren=kantoren,
     )
 
@@ -178,6 +192,7 @@ def _run_noordholland(
     list_invnrs: bool = False,
     csv_out: str | None = None,
     out_dir: Path | None = None,
+    workers: int = download.DEFAULT_WORKERS,
     kantoren: set[str] | None = None,
 ) -> RunSummary | None:
     print("=== Noord-Holland pipeline (Noord-Hollands Archief) ===")
@@ -188,6 +203,7 @@ def _run_noordholland(
         list_invnrs=list_invnrs,
         csv_out=csv_out,
         out_dir=out_dir,
+        workers=workers,
         kantoren=kantoren,
     )
 
@@ -197,6 +213,7 @@ def _run_zeeland(
     list_invnrs: bool = False,
     csv_out: str | None = None,
     out_dir: Path | None = None,
+    workers: int = download.DEFAULT_WORKERS,
     kantoren: set[str] | None = None,
 ) -> RunSummary | None:
     print("=== Zeeland pipeline (Zeeuws Archief) ===")
@@ -207,6 +224,7 @@ def _run_zeeland(
         list_invnrs=list_invnrs,
         csv_out=csv_out,
         out_dir=out_dir,
+        workers=workers,
         kantoren=kantoren,
     )
 
@@ -216,6 +234,7 @@ def _run_gelderland(
     list_invnrs: bool = False,
     csv_out: str | None = None,
     out_dir: Path | None = None,
+    workers: int = download.DEFAULT_WORKERS,
     kantoren: set[str] | None = None,
 ) -> RunSummary | None:
     print("=== Gelderland pipeline (Gelders Archief) ===")
@@ -226,6 +245,7 @@ def _run_gelderland(
         list_invnrs=list_invnrs,
         csv_out=csv_out,
         out_dir=out_dir,
+        workers=workers,
         kantoren=kantoren,
     )
 
@@ -292,6 +312,18 @@ def main() -> None:
         ),
     )
     parser.add_argument(
+        "--workers",
+        type=int,
+        default=download.DEFAULT_WORKERS,
+        help=(
+            "Concurrent image downloads per archive "
+            f"(default: {download.DEFAULT_WORKERS}). "
+            "--workers 1 restores the strictly sequential behaviour of earlier "
+            "releases. Raising it is at your own risk: these are small public "
+            "archives, so stay well below what the server can take."
+        ),
+    )
+    parser.add_argument(
         "--refresh-cache",
         action="store_true",
         default=False,
@@ -329,6 +361,7 @@ def main() -> None:
             "csv_out": csv_path,
             "out_dir": out_dir,
         }
+        kwargs["workers"] = args.workers
         kwargs["kantoren"] = kantoor_filter
         if name in CACHED_LISTING_PIPELINES:
             kwargs["refresh_cache"] = args.refresh_cache

@@ -13,7 +13,7 @@ import sys
 
 import pytest
 
-from memories_crawl import cli, gelderland, noordholland, paths, zeeland
+from memories_crawl import cli, download, gelderland, noordholland, paths, zeeland
 from memories_crawl.summary import (
     PageTally,
     RunSummary,
@@ -188,7 +188,7 @@ def h(monkeypatch, tmp_path):
 
     for mod in (gelderland, noordholland, zeeland):
         monkeypatch.setattr(mod, "_download_file", fake_download)
-        monkeypatch.setattr(mod.time, "sleep", lambda *_: None)
+        monkeypatch.setattr(download.time, "sleep", lambda *_: None)
 
     def harvest(unit: str, items: list[dict] | None = None) -> list[dict]:
         wanted = [it["invnr"] for it in items] if items is not None else UNITS[unit]

@@ -55,12 +55,11 @@ from __future__ import annotations
 import csv
 import json
 import re
-import time
 from pathlib import Path
 
 import requests
 
-from memories_crawl import filters, paths
+from memories_crawl import download, filters, paths
 from memories_crawl.summary import PageTally, RunSummary, announce
 
 # ---------------------------------------------------------------------------
@@ -73,6 +72,9 @@ MAIS_VAST = "0"
 IMAGE_BASE = "https://preserve3.archieven.nl/mi-0/fonc-rhcl"
 IMAGE_FORMAT = "large"  # 714 × 1024 PNG; see module docstring
 USER_AGENT = "memories-crawl/1.0"
+# Requests per second for the image fetches: the pace the old fixed
+# time.sleep(0.10) after every fetched image produced, now shared across workers.
+DOWNLOAD_RATE = 10.0
 
 ARCHIVE = "limburg"
 
@@ -434,6 +436,13 @@ def _image_url(code: str, tok: dict) -> str:
     )
 
 
+def _session() -> requests.Session:
+    s = requests.Session()
+    s.headers["User-Agent"] = USER_AGENT
+    s.headers["Referer"] = "https://www.archieven.nl/"
+    return s
+
+
 def _download_one(session: requests.Session, url: str, dest: Path) -> str:
     if dest.exists() and dest.stat().st_size > 0:
         return "exists"
@@ -477,6 +486,7 @@ def main(
     list_invnrs: bool = False,
     csv_out: str | None = None,
     out_dir: Path | None = None,
+    workers: int = download.DEFAULT_WORKERS,
     kantoren: set[str] | None = None,
 ) -> RunSummary | None:
     kantoor_filter = filters.normalize(kantoren)
@@ -486,131 +496,145 @@ def main(
     output_dir = paths.archive_dir(ARCHIVE)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    session = requests.Session()
-    session.headers["User-Agent"] = USER_AGENT
-    session.headers["Referer"] = "https://www.archieven.nl/"
+    downloader = download.Downloader(
+        _download_one, workers=workers, rate=DOWNLOAD_RATE, session_factory=_session
+    )
+    try:
+        # Phase 1: inventory per archive code (one Playwright session per code).
+        # Where the inventory is already cached the filters are resolved against it
+        # first, so a code that provably holds nothing we want is never discovered.
+        filtering = invnrs is not None or kantoor_filter is not None
+        inventories: dict[str, list[dict]] = {}
+        for code in ARCHIVE_CODES:
+            items = _cached_inventory(code) if filtering else None
+            if items is None:
+                print(f"\n  {code}: discovering digitized inventarisnummers …")
+                items = _harvest_inventory(code)
+            inventories[code] = [it for it in items if _keep_item(it, code, invnrs, kantoor_filter)]
 
-    # Phase 1: inventory per archive code (one Playwright session per code).
-    # Where the inventory is already cached the filters are resolved against it
-    # first, so a code that provably holds nothing we want is never discovered.
-    filtering = invnrs is not None or kantoor_filter is not None
-    inventories: dict[str, list[dict]] = {}
-    for code in ARCHIVE_CODES:
-        items = _cached_inventory(code) if filtering else None
-        if items is None:
-            print(f"\n  {code}: discovering digitized inventarisnummers …")
-            items = _harvest_inventory(code)
-        inventories[code] = [it for it in items if _keep_item(it, code, invnrs, kantoor_filter)]
-
-    if filtering:
-        total = sum(len(v) for v in inventories.values())
-        print(f"\nFiltered to {total} items matching {filters.describe(invnrs, kantoren)}.")
-        if not total:
-            print(
-                f"\nWARNING: {filters.describe(invnrs, kantoren)} matched no "
-                f"inventarisnummer in either of the {len(ARCHIVE_CODES)} archive codes."
-            )
-
-    # --list-invnrs (print table and exit, no Playwright or downloads)
-    if list_invnrs:
-        csv_rows: list[dict] = []
-        for code, items in inventories.items():
-            axis = ARCHIVE_CODES[code]["axis"]
-            print(f"\n{code} ({ARCHIVE_CODES[code]['title']}):")
-            print(f"  {'invnr':>6}  {axis:<20}  {'datering':<12}  title")
-            print(f"  {'------':>6}  {'-' * min(len(axis), 20):<20}  {'------------':<12}  -----")
-            for it in items:
+        if filtering:
+            total = sum(len(v) for v in inventories.values())
+            print(f"\nFiltered to {total} items matching {filters.describe(invnrs, kantoren)}.")
+            if not total:
                 print(
-                    f"  {it['invnr']:>6}  {it['name']:<20}"
-                    f"  {it['datering']:<12}  {it['title'][:60]}"
+                    f"\nWARNING: {filters.describe(invnrs, kantoren)} matched no "
+                    f"inventarisnummer in either of the {len(ARCHIVE_CODES)} archive codes."
                 )
-                csv_rows.append(
-                    {
-                        "code": code,
-                        "invnr": it["invnr"],
-                        "place_or_kantoor": it.get("name", ""),
-                        "datering": it.get("datering", ""),
-                        "title": it.get("title", ""),
-                    }
+
+        # --list-invnrs (print table and exit, no Playwright or downloads)
+        if list_invnrs:
+            csv_rows: list[dict] = []
+            for code, items in inventories.items():
+                axis = ARCHIVE_CODES[code]["axis"]
+                print(f"\n{code} ({ARCHIVE_CODES[code]['title']}):")
+                print(f"  {'invnr':>6}  {axis:<20}  {'datering':<12}  title")
+                print(
+                    f"  {'------':>6}  {'-' * min(len(axis), 20):<20}  {'------------':<12}  -----"
                 )
-        print()
-        if csv_out and csv_rows:
-            with open(csv_out, "w", newline="", encoding="utf-8") as f:
-                writer = csv.DictWriter(
-                    f, fieldnames=["code", "invnr", "place_or_kantoor", "datering", "title"]
-                )
-                writer.writeheader()
-                writer.writerows(csv_rows)
-            print(f"Wrote {len(csv_rows)} rows to {csv_out}\n")
-        return
-
-    # Phase 2 + 3: token harvest per digitized invnr, then download.
-    # One Playwright session shared across all invnrs of a given code –
-    # individual page navigations reuse the same browser context.
-    from playwright.sync_api import sync_playwright  # noqa: PLC0415
-
-    summary = RunSummary(ARCHIVE, "Limburg", unit_name="archive codes")
-
-    for code, items in inventories.items():
-        if not items:
-            print(f"\n  {code}: no digitized items, skipping.")
-            continue
-
-        # Skip Playwright entirely if every invnr already has cached tokens.
-        need_playwright = any(not _tokens_cache_path(code, it["invnr"]).exists() for it in items)
-
-        if need_playwright:
-            print(f"\n  {code}: harvesting tokens for {len(items)} registers …")
-            with sync_playwright() as pw:
-                browser = pw.chromium.launch(headless=True)
-                page = browser.new_page()
-                for idx, it in enumerate(items, 1):
-                    cache = _tokens_cache_path(code, it["invnr"])
-                    if cache.exists():
-                        continue
+                for it in items:
                     print(
-                        f"    [{idx:>3}/{len(items)}] invnr {it['invnr']} "
-                        f"({it['name']}, {it['datering']}) …",
-                        flush=True,
+                        f"  {it['invnr']:>6}  {it['name']:<20}"
+                        f"  {it['datering']:<12}  {it['title'][:60]}"
                     )
-                    toks = _ensure_tokens(page, code, it["invnr"], it["minr"])
-                    print(f"        → {len(toks)} pages")
-                browser.close()
-        else:
-            print(f"\n  {code}: all token caches present, skipping Playwright.")
+                    csv_rows.append(
+                        {
+                            "code": code,
+                            "invnr": it["invnr"],
+                            "place_or_kantoor": it.get("name", ""),
+                            "datering": it.get("datering", ""),
+                            "title": it.get("title", ""),
+                        }
+                    )
+            print()
+            if csv_out and csv_rows:
+                with open(csv_out, "w", newline="", encoding="utf-8") as f:
+                    writer = csv.DictWriter(
+                        f, fieldnames=["code", "invnr", "place_or_kantoor", "datering", "title"]
+                    )
+                    writer.writeheader()
+                    writer.writerows(csv_rows)
+                print(f"Wrote {len(csv_rows)} rows to {csv_out}\n")
+            return
 
-        # Download phase. The token caches already hold every page of every
-        # register, so the size of what follows is known before it starts.
-        print(f"\n  {code}: downloading scans …")
-        n_pages = sum(len(_load_json(_tokens_cache_path(code, it["invnr"])) or []) for it in items)
-        announce(n_pages, len(items), code)
-        summary.units += 1
-        summary.registers += len(items)
+        # Phase 2 + 3: token harvest per digitized invnr, then download.
+        # One Playwright session shared across all invnrs of a given code –
+        # individual page navigations reuse the same browser context.
+        from playwright.sync_api import sync_playwright  # noqa: PLC0415
 
-        code_tally = PageTally()
-        for it in items:
-            tokens = _load_json(_tokens_cache_path(code, it["invnr"])) or []
-            dest_dir = output_dir / code / str(it["invnr"])
-            _write_metadata(dest_dir, code, it, len(tokens))
-            tally = PageTally()
-            for tok in tokens:
-                url = _image_url(code, tok)
-                fn = f"NL-MtHCL_{code}_{tok['invnr']}_{tok['page']:04d}.png"
-                dest = dest_dir / fn
-                if tally.record(_download_one(session, url, dest), dest) == "downloaded":
-                    time.sleep(0.10)
-            print(
-                f"    invnr {it['invnr']} ({it['name']}) {tally.describe(len(tokens))}",
-                flush=True,
+        summary = RunSummary(ARCHIVE, "Limburg", unit_name="archive codes")
+
+        for code, items in inventories.items():
+            if not items:
+                print(f"\n  {code}: no digitized items, skipping.")
+                continue
+
+            # Skip Playwright entirely if every invnr already has cached tokens.
+            need_playwright = any(
+                not _tokens_cache_path(code, it["invnr"]).exists() for it in items
             )
-            # Fold in per register, not per code, so a run that dies midway
-            # still reports everything it downloaded.
-            code_tally += tally
-            summary.pages += tally
-        print(f"    {code}: {code_tally.describe()}")
 
-    summary.report()
-    return summary
+            if need_playwright:
+                print(f"\n  {code}: harvesting tokens for {len(items)} registers …")
+                with sync_playwright() as pw:
+                    browser = pw.chromium.launch(headless=True)
+                    page = browser.new_page()
+                    for idx, it in enumerate(items, 1):
+                        cache = _tokens_cache_path(code, it["invnr"])
+                        if cache.exists():
+                            continue
+                        print(
+                            f"    [{idx:>3}/{len(items)}] invnr {it['invnr']} "
+                            f"({it['name']}, {it['datering']}) …",
+                            flush=True,
+                        )
+                        toks = _ensure_tokens(page, code, it["invnr"], it["minr"])
+                        print(f"        → {len(toks)} pages")
+                    browser.close()
+            else:
+                print(f"\n  {code}: all token caches present, skipping Playwright.")
+
+            # Download phase. The token caches already hold every page of every
+            # register, so the size of what follows is known before it starts.
+            print(f"\n  {code}: downloading scans …")
+            n_pages = sum(
+                len(_load_json(_tokens_cache_path(code, it["invnr"])) or []) for it in items
+            )
+            announce(n_pages, len(items), code)
+            summary.units += 1
+            summary.registers += len(items)
+
+            code_tally = PageTally()
+            for it in items:
+                tokens = _load_json(_tokens_cache_path(code, it["invnr"])) or []
+                dest_dir = output_dir / code / str(it["invnr"])
+                _write_metadata(dest_dir, code, it, len(tokens))
+                jobs = [
+                    download.Job(
+                        _image_url(code, tok),
+                        dest_dir / f"NL-MtHCL_{code}_{tok['invnr']}_{tok['page']:04d}.png",
+                    )
+                    for tok in tokens
+                ]
+                tally = PageTally()
+
+                def record_page(job: download.Job, status: str) -> None:
+                    tally.record(status, job.dest)
+                    summary.pages.record(status, job.dest)
+
+                downloader.run(jobs, on_result=record_page)
+                print(
+                    f"    invnr {it['invnr']} ({it['name']}) {tally.describe(len(tokens))}",
+                    flush=True,
+                )
+                # Fold in per register, not per code, so a run that dies midway
+                # still reports everything it downloaded.
+                code_tally += tally
+            print(f"    {code}: {code_tally.describe()}")
+
+        summary.report()
+        return summary
+    finally:
+        downloader.close()
 
 
 if __name__ == "__main__":

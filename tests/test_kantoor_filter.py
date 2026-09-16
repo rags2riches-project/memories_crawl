@@ -14,7 +14,7 @@ import json
 
 import pytest
 
-from memories_crawl import filters, gelderland, noordholland, paths, zeeland
+from memories_crawl import download, filters, gelderland, noordholland, paths, zeeland
 
 # Per archive: the archive's own kantoor identifier -> (kantoor name, invnrs).
 # Gelderland keys kantoren by archief-code, Zeeland and Noord-Holland by minr.
@@ -116,7 +116,7 @@ def h(request, monkeypatch, tmp_path):
     paths.set_out_dir(None)  # default ./scans, i.e. below tmp_path
 
     monkeypatch.setattr(mod, "_download_file", harness.fake_download)
-    monkeypatch.setattr(mod.time, "sleep", lambda *_: None)
+    monkeypatch.setattr(download.time, "sleep", lambda *_: None)
 
     if mod is gelderland:
         monkeypatch.setattr(mod, "KANTOREN", {n: k for k, (n, _) in harness.units.items()})
@@ -374,7 +374,7 @@ def offline(monkeypatch, tmp_path):
 
     def install(mod, registers):
         monkeypatch.setattr(mod, "_session", lambda: object())
-        monkeypatch.setattr(mod.time, "sleep", lambda *_: None)
+        monkeypatch.setattr(download.time, "sleep", lambda *_: None)
         # Deeds, persons and assets are only ever paged for a register that
         # survived the filters, so an empty answer is enough here.
         monkeypatch.setattr(

@@ -34,11 +34,12 @@ import csv
 import json
 import re
 import time
+from collections import Counter
 from pathlib import Path
 
 import requests
 
-from memories_crawl import filters, paths, regcache
+from memories_crawl import download, filters, paths, regcache
 from memories_crawl.summary import PageTally, RunSummary
 
 API_BASE = "https://webservices.memorix.nl/genealogy"
@@ -289,6 +290,7 @@ def main(
     list_invnrs: bool = False,
     csv_out: str | None = None,
     out_dir: Path | None = None,
+    workers: int = download.DEFAULT_WORKERS,
     kantoren: set[str] | None = None,
     refresh_cache: bool = False,
 ) -> RunSummary | None:
@@ -299,141 +301,159 @@ def main(
     output_dir = paths.archive_dir(ARCHIVE)
 
     session = _session()
-    output_dir.mkdir(parents=True, exist_ok=True)
+    downloader = download.Downloader(_download_file, workers=workers, session_factory=_session)
+    try:
+        output_dir.mkdir(parents=True, exist_ok=True)
 
-    print("Collecting Tresoar Memorie van Successie registers …")
-    registers = _load_registers(session, invnrs=invnrs, refresh_cache=refresh_cache)
-    if kantoor_filter is not None:
-        registers = [
-            r for r in registers if filters.matches(kantoor_filter, _kantoor_from_register(r))
-        ]
-    if invnrs is not None or kantoor_filter is not None:
-        print(
-            f"Filtered to {len(registers)} registers matching {filters.describe(invnrs, kantoren)}."
-        )
-        if not registers:
+        print("Collecting Tresoar Memorie van Successie registers …")
+        registers = _load_registers(session, invnrs=invnrs, refresh_cache=refresh_cache)
+        if kantoor_filter is not None:
+            registers = [
+                r for r in registers if filters.matches(kantoor_filter, _kantoor_from_register(r))
+            ]
+        if invnrs is not None or kantoor_filter is not None:
             print(
-                f"\nWARNING: {filters.describe(invnrs, kantoren)} matched no "
-                "register in the Tresoar collection."
+                f"Filtered to {len(registers)} registers matching "
+                f"{filters.describe(invnrs, kantoren)}."
             )
-    else:
-        print(f"Found {len(registers)} registers.")
+            if not registers:
+                print(
+                    f"\nWARNING: {filters.describe(invnrs, kantoren)} matched no "
+                    "register in the Tresoar collection."
+                )
+        else:
+            print(f"Found {len(registers)} registers.")
 
-    if list_invnrs:
-        _list_registers(registers, csv_out=csv_out)
-        return
+        if list_invnrs:
+            _list_registers(registers, csv_out=csv_out)
+            return
 
-    summary = RunSummary(ARCHIVE, "Friesland", unit_name="kantoren", record_name="persons")
-    kantoren_seen: set[str] = set()
+        summary = RunSummary(ARCHIVE, "Friesland", unit_name="kantoren", record_name="persons")
+        kantoren_seen: set[str] = set()
 
-    done = _load_done()
-    progress_csv = _progress_csv()
-    write_header = not progress_csv.exists() or progress_csv.stat().st_size == 0
-    with open(progress_csv, "a", newline="", encoding="utf-8") as progress:
-        writer = csv.DictWriter(
-            progress,
-            fieldnames=["register_id", "kantoor", "invnr", "status", "n_persons"],
-        )
-        if write_header:
-            writer.writeheader()
-            progress.flush()
-
-        for idx, reg in enumerate(registers, start=1):
-            reg_id = reg.get("id") or ""
-            rmd = reg.get("metadata") or {}
-            kantoor = _kantoor_from_register(reg)
-            invnr = rmd.get("inventarisnummer") or "?"
-
-            if not reg_id or reg_id in done:
-                continue
-
-            print(
-                f"[{idx}/{len(registers)}] {kantoor} invnr {invnr} …",
-                flush=True,
+        done = _load_done()
+        progress_csv = _progress_csv()
+        write_header = not progress_csv.exists() or progress_csv.stat().st_size == 0
+        with open(progress_csv, "a", newline="", encoding="utf-8") as progress:
+            writer = csv.DictWriter(
+                progress,
+                fieldnames=["register_id", "kantoor", "invnr", "status", "n_persons"],
             )
+            if write_header:
+                writer.writeheader()
+                progress.flush()
 
-            # Fetch deeds (with embedded asset[]) and persons.
-            try:
-                deeds = _paginate(session, "/deed", f"register_id:{reg_id}", "deed")
-                persons = _paginate(session, "/person", f"register_id:{reg_id}", "person")
-            except Exception as exc:
-                print(f"      ERROR: fetch failed: {exc}", flush=True)
+            for idx, reg in enumerate(registers, start=1):
+                reg_id = reg.get("id") or ""
+                rmd = reg.get("metadata") or {}
+                kantoor = _kantoor_from_register(reg)
+                invnr = rmd.get("inventarisnummer") or "?"
+
+                if not reg_id or reg_id in done:
+                    continue
+
+                print(
+                    f"[{idx}/{len(registers)}] {kantoor} invnr {invnr} …",
+                    flush=True,
+                )
+
+                # Fetch deeds (with embedded asset[]) and persons.
+                try:
+                    deeds = _paginate(session, "/deed", f"register_id:{reg_id}", "deed")
+                    persons = _paginate(session, "/person", f"register_id:{reg_id}", "person")
+                except Exception as exc:
+                    print(f"      ERROR: fetch failed: {exc}", flush=True)
+                    writer.writerow(
+                        {
+                            "register_id": reg_id,
+                            "kantoor": kantoor,
+                            "invnr": invnr,
+                            "status": "fetch_failed",
+                            "n_persons": 0,
+                        }
+                    )
+                    progress.flush()
+                    continue
+
+                # Index deeds by id for person→deed join.
+                deed_by_id: dict[str, dict] = {d.get("id", ""): d for d in deeds}
+
+                # Queue every person's scans in one batch per register, then write
+                # the sidecars once the page counts are in.
+                jobs: list[download.Job] = []
+                people: list[tuple[dict, dict, Path]] = []
+                # Deeds embed their assets, so the register's scan count is known
+                # before a single image is fetched.
+                n_assets = sum(len(d.get("asset") or []) for d in deeds)
+                print(f"      {len(persons)} persons, {n_assets} scans …", flush=True)
+                kantoren_seen.add(kantoor)
+                summary.units = len(kantoren_seen)
+                summary.registers += 1
+
+                register_tally = PageTally()
+                n_persons = 0
+                for person in persons:
+                    deed_id = person.get("deed_id") or ""
+                    deed = deed_by_id.get(deed_id)
+                    if not deed:
+                        continue
+
+                    pmd = person.get("metadata") or {}
+                    # Only include overledene persons (skip Vermeld etc.)
+                    if pmd.get("type_title", "").lower() not in ("overledene", ""):
+                        continue
+
+                    slug = _person_slug(person)
+                    dest_dir = output_dir / _sanitize(kantoor) / _sanitize(invnr) / slug
+                    people.append((person, deed, dest_dir))
+
+                    # Download scan pages from the deed's embedded assets.
+                    assets = deed.get("asset") or []
+                    for asset_idx, asset in enumerate(assets, start=1):
+                        url = asset.get("download") or ""
+                        if not url:
+                            continue
+                        # Determine file extension from URL path.
+                        url_path = url.split("?")[0]
+                        ext = Path(url_path).suffix or ".jp2"
+                        dest = dest_dir / f"{asset_idx:04d}{ext}"
+                        jobs.append(download.Job(url, dest, key=dest_dir))
+
+                per_person: Counter[Path] = Counter()
+
+                def _tally(
+                    job: download.Job, status: str, per_person: Counter[Path] = per_person
+                ) -> None:
+                    register_tally.record(status, job.dest)
+                    summary.pages.record(status, job.dest)
+                    if status in ("downloaded", "exists"):
+                        per_person[job.key] += 1
+
+                downloader.run(jobs, on_result=_tally)
+
+                n_persons = 0
+                for person, deed, dest_dir in people:
+                    _write_person_metadata(dest_dir, person, deed, reg, per_person[dest_dir])
+                    n_persons += 1
+
                 writer.writerow(
                     {
                         "register_id": reg_id,
                         "kantoor": kantoor,
                         "invnr": invnr,
-                        "status": "fetch_failed",
-                        "n_persons": 0,
+                        "status": "done",
+                        "n_persons": n_persons,
                     }
                 )
                 progress.flush()
-                continue
+                summary.records += n_persons
+                print(f"      ✓ {n_persons} persons, {register_tally.describe()}", flush=True)
+                time.sleep(REQUEST_SLEEP)
 
-            # Index deeds by id for person→deed join.
-            deed_by_id: dict[str, dict] = {d.get("id", ""): d for d in deeds}
-
-            # Deeds embed their assets, so the register's scan count is known
-            # before a single image is fetched.
-            n_assets = sum(len(d.get("asset") or []) for d in deeds)
-            print(f"      {len(persons)} persons, {n_assets} scans …", flush=True)
-            kantoren_seen.add(kantoor)
-            summary.units = len(kantoren_seen)
-            summary.registers += 1
-
-            register_tally = PageTally()
-            n_persons = 0
-            for person in persons:
-                deed_id = person.get("deed_id") or ""
-                deed = deed_by_id.get(deed_id)
-                if not deed:
-                    continue
-
-                pmd = person.get("metadata") or {}
-                # Only include overledene persons (skip Vermeld etc.)
-                if pmd.get("type_title", "").lower() not in ("overledene", ""):
-                    continue
-
-                slug = _person_slug(person)
-                dest_dir = output_dir / _sanitize(kantoor) / _sanitize(invnr) / slug
-
-                # Download scan pages from the deed's embedded assets.
-                assets = deed.get("asset") or []
-                tally = PageTally()
-                for asset_idx, asset in enumerate(assets, start=1):
-                    url = asset.get("download") or ""
-                    if not url:
-                        continue
-                    # Determine file extension from URL path.
-                    url_path = url.split("?")[0]
-                    ext = Path(url_path).suffix or ".jp2"
-                    dest = dest_dir / f"{asset_idx:04d}{ext}"
-                    tally.record(_download_file(session, url, dest), dest)
-
-                n_done = tally.downloaded + tally.skipped
-                _write_person_metadata(dest_dir, person, deed, reg, n_done)
-                n_persons += 1
-                # Fold in per person, not per register, so a run that dies
-                # midway still reports everything it downloaded.
-                register_tally += tally
-                summary.pages += tally
-
-            writer.writerow(
-                {
-                    "register_id": reg_id,
-                    "kantoor": kantoor,
-                    "invnr": invnr,
-                    "status": "done",
-                    "n_persons": n_persons,
-                }
-            )
-            progress.flush()
-            summary.records += n_persons
-            print(f"      ✓ {n_persons} persons, {register_tally.describe()}", flush=True)
-            time.sleep(REQUEST_SLEEP)
-
-    summary.report()
-    return summary
+        summary.report()
+        return summary
+    finally:
+        downloader.close()
 
 
 if __name__ == "__main__":

@@ -38,12 +38,11 @@ from __future__ import annotations
 import csv
 import json
 import re
-import time
 from pathlib import Path
 
 import requests
 
-from memories_crawl import filters, paths
+from memories_crawl import download, filters, paths
 from memories_crawl.summary import PageTally, RunSummary, announce
 
 ARCHIVE_NAME = "Het Utrechts Archief"
@@ -51,6 +50,9 @@ MAIS_ADT = "39"
 MAIS_VAST = "39"
 ARCHIVE = "utrechtsarchief"
 USER_AGENT = "memories-crawl/1.0"
+# Requests per second for the image fetches: the pace the old fixed
+# time.sleep(0.15) between images produced, now shared across workers.
+DOWNLOAD_RATE = 1 / 0.15
 
 # Kantoren and their archive codes (micode).
 # Subsection minr values are discovered dynamically from the inv2 tree.
@@ -427,6 +429,12 @@ def _discover_subsections(micode: str) -> list[dict]:
 # ---------------------------------------------------------------------------
 
 
+def _session() -> requests.Session:
+    s = requests.Session()
+    s.headers["User-Agent"] = USER_AGENT
+    return s
+
+
 def _download_file(session: requests.Session, url: str, dest: Path) -> str:
     if dest.exists() and dest.stat().st_size > 0:
         return "exists"
@@ -469,6 +477,7 @@ def main(
     list_invnrs: bool = False,
     csv_out: str | None = None,
     out_dir: Path | None = None,
+    workers: int = download.DEFAULT_WORKERS,
     kantoren: set[str] | None = None,
 ) -> RunSummary | None:
     kantoor_filter = filters.normalize(kantoren)
@@ -478,156 +487,165 @@ def main(
     output_dir = paths.archive_dir(ARCHIVE)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    session = requests.Session()
-    session.headers["User-Agent"] = USER_AGENT
+    downloader = download.Downloader(
+        _download_file, workers=workers, rate=DOWNLOAD_RATE, session_factory=_session
+    )
+    try:
+        csv_rows: list[dict] = []
+        summary = RunSummary(ARCHIVE, "Utrecht", unit_name="kantoren")
+        kantoren_seen: set[str] = set()
+        matched_any = False
 
-    csv_rows: list[dict] = []
-    summary = RunSummary(ARCHIVE, "Utrecht", unit_name="kantoren")
-    kantoren_seen: set[str] = set()
-    matched_any = False
-
-    for kantoor, micode in KANTOREN.items():
-        # --kantoor is applied before _discover_subsections, which is an
-        # uncached Playwright pass per kantoor.
-        if not filters.matches(kantoor_filter, kantoor, micode):
-            continue
-
-        print(f"\n{'=' * 60}")
-        print(f"  {kantoor} (micode={micode})")
-        print(f"{'=' * 60}")
-
-        # Step 1: Discover subsections
-        print("  Discovering subsections …")
-        subsections = _discover_subsections(micode)
-        print(f"  Found {len(subsections)} MvS subsections")
-
-        if not subsections:
-            print("  WARNING: no subsections found, skipping")
-            continue
-
-        done_file = paths.cache_file(ARCHIVE, f"done_{kantoor}.txt")
-        done: set[str] = set()
-        if done_file.exists():
-            done = set(done_file.read_text().splitlines())
-
-        for section_idx, section in enumerate(subsections):
-            section_minr = section["minr"]
-            print(
-                f"\n  --- Section {section_idx + 1}/{len(subsections)} "
-                f"(minr={section_minr}): {section['text'][:80]} ---"
-            )
-
-            # Step 2: Harvest all page tokens for this subsection
-            pages = _harvest_page_tokens(micode, section_minr)
-
-            if not pages:
-                print("    No pages found in this section")
+        for kantoor, micode in KANTOREN.items():
+            # --kantoor is applied before _discover_subsections, which is an
+            # uncached Playwright pass per kantoor.
+            if not filters.matches(kantoor_filter, kantoor, micode):
                 continue
 
-            # Group pages by invnr
-            invnr_pages: dict[int, list[dict]] = {}
-            invnr_texts: dict[int, str] = {}
-            for p in pages:
-                invnr_pages.setdefault(p["invnr"], []).append(p)
-                if p["invnr"] not in invnr_texts:
-                    invnr_texts[p["invnr"]] = p.get("inv_text", "")
+            print(f"\n{'=' * 60}")
+            print(f"  {kantoor} (micode={micode})")
+            print(f"{'=' * 60}")
 
-            print(f"    {len(invnr_pages)} inventarisnummers with scans")
+            # Step 1: Discover subsections
+            print("  Discovering subsections …")
+            subsections = _discover_subsections(micode)
+            print(f"  Found {len(subsections)} MvS subsections")
 
-            # --invnr filter before download
-            if invnrs is not None:
-                invnr_pages = {
-                    invnr: ips for invnr, ips in invnr_pages.items() if str(invnr) in invnrs
-                }
-                invnr_texts = {invnr: invnr_texts[invnr] for invnr in invnr_pages}
-
-            if invnr_pages:
-                matched_any = True
-
-            # --list-invnrs: print and skip download for this section
-            if list_invnrs:
-                print(f"\n  {kantoor} – {section['text'][:60]}:")
-                print(f"    {'invnr':>6}  {'description':<30}  pages")
-                print(f"    {'------':>6}  {'----------------------------':<30}  -----")
-                for invnr in sorted(invnr_pages.keys()):
-                    desc = invnr_texts.get(invnr, "")[:30]
-                    print(f"    {invnr:>6}  {desc:<30}  {len(invnr_pages[invnr]):>5}")
-                    csv_rows.append(
-                        {
-                            "kantoor": kantoor,
-                            "section": section["text"][:60],
-                            "invnr": invnr,
-                            "description": invnr_texts.get(invnr, ""),
-                            "pages": len(invnr_pages[invnr]),
-                        }
-                    )
+            if not subsections:
+                print("  WARNING: no subsections found, skipping")
                 continue
 
-            announce(
-                sum(len(v) for v in invnr_pages.values()),
-                len(invnr_pages),
-                f"{kantoor}, section {section_idx + 1}",
-                indent="    ",
-            )
-            kantoren_seen.add(kantoor)
-            summary.units = len(kantoren_seen)
-            summary.registers += len(invnr_pages)
+            done_file = paths.cache_file(ARCHIVE, f"done_{kantoor}.txt")
+            done: set[str] = set()
+            if done_file.exists():
+                done = set(done_file.read_text().splitlines())
 
-            section_tally = PageTally()
-            for invnr, inv_pages in sorted(invnr_pages.items()):
-                key = str(invnr)
-                if key in done:
-                    # Recorded complete by an earlier run: its pages are on
-                    # disk, so they count as already present, not as new.
-                    section_tally.skipped += len(inv_pages)
-                    summary.pages.skipped += len(inv_pages)
+            for section_idx, section in enumerate(subsections):
+                section_minr = section["minr"]
+                print(
+                    f"\n  --- Section {section_idx + 1}/{len(subsections)} "
+                    f"(minr={section_minr}): {section['text'][:80]} ---"
+                )
+
+                # Step 2: Harvest all page tokens for this subsection
+                pages = _harvest_page_tokens(micode, section_minr)
+
+                if not pages:
+                    print("    No pages found in this section")
                     continue
 
-                inv_text = invnr_texts.get(invnr, "")
-                dest_dir = output_dir / kantoor / f"{invnr:04d}"
-                print(f"    invnr {invnr} ({inv_text[:40].strip()}) …", end=" ", flush=True)
+                # Group pages by invnr
+                invnr_pages: dict[int, list[dict]] = {}
+                invnr_texts: dict[int, str] = {}
+                for p in pages:
+                    invnr_pages.setdefault(p["invnr"], []).append(p)
+                    if p["invnr"] not in invnr_texts:
+                        invnr_texts[p["invnr"]] = p.get("inv_text", "")
 
-                _write_metadata(dest_dir, kantoor, micode, invnr, inv_text, len(inv_pages))
+                print(f"    {len(invnr_pages)} inventarisnummers with scans")
 
-                tally = PageTally()
-                for p in sorted(inv_pages, key=lambda x: x["page"]):
-                    url = _fullsize_url(p["thumb_url"])
-                    dest = dest_dir / f"{p['page']:04d}.jpg"
-                    tally.record(_download_file(session, url, dest), dest)
-                    time.sleep(0.15)
+                # --invnr filter before download
+                if invnrs is not None:
+                    invnr_pages = {
+                        invnr: ips for invnr, ips in invnr_pages.items() if str(invnr) in invnrs
+                    }
+                    invnr_texts = {invnr: invnr_texts[invnr] for invnr in invnr_pages}
 
-                print(tally.describe(len(inv_pages)))
+                if invnr_pages:
+                    matched_any = True
 
-                with open(done_file, "a") as f:
-                    f.write(key + "\n")
+                # --list-invnrs: print and skip download for this section
+                if list_invnrs:
+                    print(f"\n  {kantoor} – {section['text'][:60]}:")
+                    print(f"    {'invnr':>6}  {'description':<30}  pages")
+                    print(f"    {'------':>6}  {'----------------------------':<30}  -----")
+                    for invnr in sorted(invnr_pages.keys()):
+                        desc = invnr_texts.get(invnr, "")[:30]
+                        print(f"    {invnr:>6}  {desc:<30}  {len(invnr_pages[invnr]):>5}")
+                        csv_rows.append(
+                            {
+                                "kantoor": kantoor,
+                                "section": section["text"][:60],
+                                "invnr": invnr,
+                                "description": invnr_texts.get(invnr, ""),
+                                "pages": len(invnr_pages[invnr]),
+                            }
+                        )
+                    continue
 
-                # Fold in per register, not per section, so a run that dies
-                # midway still reports everything it downloaded.
-                section_tally += tally
-                summary.pages += tally
-
-            print(f"    Section totals: {section_tally.describe()}")
-
-    if (invnrs is not None or kantoor_filter is not None) and not matched_any:
-        print(
-            f"\nWARNING: {filters.describe(invnrs, kantoren)} matched no "
-            f"inventarisnummer in any of the {len(KANTOREN)} kantoren."
-        )
-
-    if list_invnrs:
-        print()
-        if csv_out and csv_rows:
-            with open(csv_out, "w", newline="", encoding="utf-8") as f:
-                writer = csv.DictWriter(
-                    f, fieldnames=["kantoor", "section", "invnr", "description", "pages"]
+                announce(
+                    sum(len(v) for v in invnr_pages.values()),
+                    len(invnr_pages),
+                    f"{kantoor}, section {section_idx + 1}",
+                    indent="    ",
                 )
-                writer.writeheader()
-                writer.writerows(csv_rows)
-            print(f"Wrote {len(csv_rows)} rows to {csv_out}\n")
-        return
+                kantoren_seen.add(kantoor)
+                summary.units = len(kantoren_seen)
+                summary.registers += len(invnr_pages)
 
-    summary.report()
-    return summary
+                section_tally = PageTally()
+                for invnr, inv_pages in sorted(invnr_pages.items()):
+                    key = str(invnr)
+                    if key in done:
+                        # Recorded complete by an earlier run: its pages are on
+                        # disk, so they count as already present, not as new.
+                        section_tally.skipped += len(inv_pages)
+                        summary.pages.skipped += len(inv_pages)
+                        continue
+
+                    inv_text = invnr_texts.get(invnr, "")
+                    dest_dir = output_dir / kantoor / f"{invnr:04d}"
+                    print(f"    invnr {invnr} ({inv_text[:40].strip()}) …", end=" ", flush=True)
+
+                    _write_metadata(dest_dir, kantoor, micode, invnr, inv_text, len(inv_pages))
+
+                    jobs = [
+                        download.Job(
+                            _fullsize_url(p["thumb_url"]), dest_dir / f"{p['page']:04d}.jpg"
+                        )
+                        for p in sorted(inv_pages, key=lambda x: x["page"])
+                    ]
+                    tally = PageTally()
+
+                    def record_page(job: download.Job, status: str) -> None:
+                        tally.record(status, job.dest)
+                        summary.pages.record(status, job.dest)
+
+                    downloader.run(jobs, on_result=record_page)
+
+                    print(tally.describe(len(inv_pages)))
+
+                    with open(done_file, "a") as f:
+                        f.write(key + "\n")
+
+                    # Fold in per register, not per section, so a run that dies
+                    # midway still reports everything it downloaded.
+                    section_tally += tally
+
+                print(f"    Section totals: {section_tally.describe()}")
+
+        if (invnrs is not None or kantoor_filter is not None) and not matched_any:
+            print(
+                f"\nWARNING: {filters.describe(invnrs, kantoren)} matched no "
+                f"inventarisnummer in any of the {len(KANTOREN)} kantoren."
+            )
+
+        if list_invnrs:
+            print()
+            if csv_out and csv_rows:
+                with open(csv_out, "w", newline="", encoding="utf-8") as f:
+                    writer = csv.DictWriter(
+                        f, fieldnames=["kantoor", "section", "invnr", "description", "pages"]
+                    )
+                    writer.writeheader()
+                    writer.writerows(csv_rows)
+                print(f"Wrote {len(csv_rows)} rows to {csv_out}\n")
+            return
+
+        summary.report()
+        return summary
+    finally:
+        downloader.close()
 
 
 if __name__ == "__main__":
