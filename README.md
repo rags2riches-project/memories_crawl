@@ -83,12 +83,13 @@ Prints all digitized inventory numbers (with kantoor, description, date range, a
 # List all digitized invnrs for an archive
 uv run memories-crawl limburg --list-invnrs
 uv run memories-crawl gelderland --list-invnrs
-uv run memories-crawl drentsarchief --list-invnrs   # slow — fetches all deeds first
+uv run memories-crawl drentsarchief --list-invnrs
 ```
 
-For archives with cached inventory (Limburg, Gelderland, Zeeland), this runs instantly
-without launching a browser. For others (Overijssel, Utrecht, Noord-Holland), it needs
-the Playwright token-harvest pass first — but cached tokens are reused on reruns.
+For the API-backed archives (Drenthe, BHIC, Friesland) and for archives with a cached
+inventory (Limburg, Gelderland, Zeeland), this runs in about a second without launching a
+browser. For the others (Overijssel, Utrecht, Noord-Holland), it needs the Playwright
+token-harvest pass first — but cached tokens are reused on reruns.
 
 ### `--csv` — export listing to a spreadsheet
 
@@ -108,7 +109,7 @@ uv run memories-crawl gelderland --list-invnrs --csv my-output.csv
 |---|---|
 | friesland | `invnr, kantoor, register_name` |
 | nationaalarchief | `invnr` |
-| drentsarchief | `invnr` |
+| drentsarchief | `invnr, gemeente, register_name` |
 | bhic | `invnr, gemeente, register_name` |
 | overijssel | `kantoor, invnr, pages` |
 | utrechtsarchief | `kantoor, section, invnr, description, pages` |
@@ -207,13 +208,19 @@ Output: `scans/nationaalarchief/{invnr}/`.
 `uv run memories-crawl drentsarchief`
 Source file: `src/memories_crawl/drentsarchief.py`
 
-Uses the **Memorix genealogy REST API** at `webservices.memorix.nl/genealogy` (~106,000 deeds total).
+Uses the **Memorix genealogy REST API** at `webservices.memorix.nl/genealogy`
+(557 registers, ~106,000 deeds total).
 
-1. Searches all persons with deed type `Successiememories` (paginated, 35,000+ pages).
-2. Collects unique deed IDs and fetches the deed detail for each.
+1. Enumerates all Memorie van Successie registers in a single request
+   (`/register?fq=search_s_brontype:"Memorie van Successie"&rows=1000`). Register
+   metadata carries `inventarisnummer` and `gemeente`, so `--list-invnrs` and
+   `--invnr` are resolved before any other request is made.
+2. For each selected register, pages `/deed?fq=register_id:{id}` and
+   `/person?fq=register_id:{id}`. Deed search results already embed
+   `asset[].download`, so no per-deed detail request is needed.
 3. Downloads all `asset[].download` URLs (full-size JPEGs).
 
-Progress is tracked in `drentsarchief_deeds.csv`.
+Progress is tracked in `drentsarchief_deeds.csv`, flushed after every deed.
 Output: `scans/drentsarchief/{deed_id}/`.
 
 ---
@@ -413,7 +420,7 @@ All pipelines are designed to be safely restarted:
 - **Friesland**: tracks completed registers in `friesland_progress.csv` (rows with `status=done` are skipped); existing per-person directories (with `metadata.json`) are skipped on reruns.
 - **Gelderland**: inventory and token cache files (`inventory_{code}.json`, `tokens_{code}.json` with partial saves every 25 invnrs) skip the slow Playwright pass; already-downloaded images are skipped by file existence check. Completed kantoren are tracked in `scans/gelderland/done.txt`.
 - **Nationaal Archief**: tracks completed inventory numbers in `nationaalarchief_done.txt`.
-- **Drents Archief**: tracks completed deeds in `drentsarchief_deeds.csv` (rows with `status=done` are skipped).
+- **Drents Archief**: tracks completed deeds in `drentsarchief_deeds.csv` (rows with `status=done` are skipped), written after every deed so an interrupted run keeps its progress; scans are downloaded to a `.part` file and renamed on completion, so a truncated file is never mistaken for a finished one.
 - **BHIC**: tracks completed registers in `bhic_progress.csv` (rows with `status=done` are skipped); already-downloaded scans are skipped by file existence check.
 - **Overijssel**: token cache files (`tokens_minr_*.json`) skip the slow Playwright pass; already-downloaded images are skipped by file existence check.
 - **Limburg**: inventory and token cache files (`inventory_{code}.json`, `tokens_{code}_{invnr}.json`) skip the slow Playwright pass; already-downloaded images are skipped by file existence check.
