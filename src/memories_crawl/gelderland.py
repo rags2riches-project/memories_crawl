@@ -75,7 +75,7 @@ from pathlib import Path
 
 import requests
 
-from memories_crawl import paths
+from memories_crawl import listing, paths
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -305,6 +305,9 @@ def _tokens_partial_path(code: str) -> Path:
     return paths.cache_file(ARCHIVE, f"tokens_{code}_partial.json")
 
 
+LIST_FIELDS = ["kantoor", "code", "invnr", "description", "pages"]
+
+
 def _save_json(path: Path, payload: object) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w", encoding="utf-8") as f:
@@ -319,6 +322,25 @@ def _load_json(path: Path) -> object | None:
             return json.load(f)
     except (json.JSONDecodeError, OSError):
         return None
+
+
+def _cached_page_counts(code: str) -> tuple[dict[int, int], bool] | None:
+    """Pages per invnr from a warm token cache, without harvesting.
+
+    Returns ``(counts, complete)`` or ``None`` when no cache exists. ``complete``
+    is False for a partial cache, where an invnr missing from the counts means
+    "not harvested yet", not "no pages" -- so a listing renders it as unknown
+    rather than as a zero that ``--only-digitized`` would throw away.
+    """
+    for path, complete in ((_tokens_path(code), True), (_tokens_partial_path(code), False)):
+        tokens = _load_json(path)
+        if not isinstance(tokens, list) or not tokens:
+            continue
+        counts: dict[int, int] = {}
+        for tok in tokens:
+            counts[tok["invnr"]] = counts.get(tok["invnr"], 0) + 1
+        return counts, complete
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -541,6 +563,8 @@ def main(
     list_invnrs: bool = False,
     csv_out: str | None = None,
     out_dir: Path | None = None,
+    only_digitized: bool = False,
+    count_scans: bool = False,
 ) -> None:
     if out_dir is not None:
         paths.set_out_dir(out_dir)
@@ -559,24 +583,48 @@ def main(
             if invnrs is not None:
                 discovered = [it for it in discovered if str(it["invnr"]) in invnrs]
             digitized = [it for it in discovered if it.get("hasScan")]
-            if digitized:
-                print(f"\n{kantoor} (code {code}):")
-                print(f"  {'invnr':>6}  description")
-                print(f"  {'------':>6}  -----------")
-                for it in digitized:
-                    print(f"  {it['invnr']:>6}  {it['text'][:60]}")
-                    csv_rows.append(
-                        {
-                            "kantoor": kantoor,
-                            "code": code,
-                            "invnr": it["invnr"],
-                            "description": it["text"],
-                        }
-                    )
+            if not digitized:
+                continue
+
+            # Page counts come from a warm token cache for free. Harvesting them
+            # fresh means driving Playwright over every invnr in the kantoor, so
+            # that only happens under --count-scans.
+            if count_scans:
+                harvested = _harvest_page_tokens(
+                    kantoor, code, discovered, write_cache=invnrs is None
+                )
+                fresh: dict[int, int] = {}
+                for tok in harvested:
+                    fresh[tok["invnr"]] = fresh.get(tok["invnr"], 0) + 1
+                cached: tuple[dict[int, int], bool] | None = (fresh, True)
+            else:
+                cached = _cached_page_counts(code)
+
+            print(f"\n{kantoor} (code {code}):")
+            print(f"  {'invnr':>6}  {'pages':>6}  description")
+            print(f"  {'------':>6}  {'------':>6}  -----------")
+            for it in digitized:
+                if cached is None:
+                    pages_here: int | None = None
+                else:
+                    counts, complete = cached
+                    pages_here = counts.get(it["invnr"], 0 if complete else None)
+                if only_digitized and not listing.has_scans(pages_here):
+                    continue
+                print(f"  {it['invnr']:>6}  {listing.fmt_count(pages_here):>6}  {it['text'][:60]}")
+                csv_rows.append(
+                    {
+                        "kantoor": kantoor,
+                        "code": code,
+                        "invnr": it["invnr"],
+                        "description": it["text"],
+                        "pages": listing.fmt_count(pages_here),
+                    }
+                )
         print()
         if csv_out and csv_rows:
             with open(csv_out, "w", newline="", encoding="utf-8") as f:
-                writer = csv.DictWriter(f, fieldnames=["kantoor", "code", "invnr", "description"])
+                writer = csv.DictWriter(f, fieldnames=LIST_FIELDS)
                 writer.writeheader()
                 writer.writerows(csv_rows)
             print(f"Wrote {len(csv_rows)} rows to {csv_out}\n")

@@ -44,7 +44,7 @@ from pathlib import Path
 
 import requests
 
-from memories_crawl import paths
+from memories_crawl import listing, paths
 
 API_BASE = "https://webservices.memorix.nl/genealogy"
 API_KEY = "a85387a2-fdb2-44d0-8209-3635e59c537e"
@@ -131,37 +131,97 @@ def _collect_registers(session: requests.Session) -> list[dict]:
     return [r for r in registers if not _is_tafel(r)]
 
 
-def _list_registers(registers: list[dict], csv_out: str | None = None) -> None:
-    """Print a table of available inventory numbers from register metadata."""
-    print(f"\n{'invnr':>6}  {'gemeente':<20}  register name")
-    print(f"{'------':>6}  {'------------------':<20}  {'-------------'}")
-    for reg in sorted(
-        registers,
+def _count(session: requests.Session, path: str, fq: str) -> int:
+    """Exact number of hits for a filter, in a single request.
+
+    ``rows=1`` still reports ``pagination.total``, so a count costs one small
+    response instead of paging the whole result set.
+    """
+    data = _get_json(session, path, {"q": "*:*", "rows": 1, "page": 1, "fq": fq})
+    pagination = (data.get("metadata") or {}).get("pagination") or {}
+    return int(pagination.get("total") or 0)
+
+
+def _register_is_digitized(register: dict) -> bool:
+    """Has Drents Archief digitized this register?
+
+    Scans hang off the deeds, but the register search result still carries a
+    truncated ``asset`` sample whenever any of them do -- 553 of the 557
+    registers, the other four with no assets under them at all. That makes the
+    digitized flag free; the exact count needs ``--count-scans``.
+    """
+    return bool(register.get("asset"))
+
+
+def _count_scans(session: requests.Session, register: dict) -> int | None:
+    """Exact number of scans under one register (one ``/asset`` count request).
+
+    ``/asset`` is queryable by ``register_id`` even though the assets belong to
+    the register's deeds, so this does not need the deed walk.
+    """
+    reg_id = register.get("id") or ""
+    if not reg_id:
+        return None
+    return _count(session, "/asset", f"register_id:{reg_id}")
+
+
+LIST_FIELDS = ["invnr", "gemeente", "register_name", "n_scans"]
+
+
+def _list_registers(
+    registers: list[dict],
+    csv_out: str | None = None,
+    counts: dict[str, int | None] | None = None,
+    only_digitized: bool = False,
+) -> None:
+    """Print a table of available inventory numbers from register metadata.
+
+    ``counts`` maps register id → exact scan count and is only supplied under
+    ``--count-scans``; otherwise the free digitized flag on the register
+    decides between an exact ``0`` and an unknown ``?``.
+    """
+
+    def _n_scans(register: dict) -> int | None:
+        if counts is not None:
+            return counts.get(register.get("id") or "")
+        return None if _register_is_digitized(register) else 0
+
+    rows: list[dict] = []
+    for reg in registers:
+        n_scans = _n_scans(reg)
+        if only_digitized and not listing.has_scans(n_scans):
+            continue
+        rows.append(
+            {
+                "invnr": _register_invnr(reg),
+                "gemeente": _register_gemeente(reg),
+                "register_name": (reg.get("metadata") or {}).get("naam") or "",
+                "n_scans": listing.fmt_count(n_scans),
+            }
+        )
+
+    print(f"\n  {'invnr':>6}  {'gemeente':<20}  {'scans':>6}  register name")
+    print(f"  {'------':>6}  {'-' * 20:<20}  {'------':>6}  {'-------------'}")
+    for row in sorted(
+        rows,
         key=lambda r: (
-            _register_gemeente(r),
-            int(_register_invnr(r)) if _register_invnr(r).isdigit() else 999999,
-            _register_invnr(r),
+            r["gemeente"],
+            int(r["invnr"]) if r["invnr"].isdigit() else 999999,
+            r["invnr"],
         ),
     ):
-        invnr = _register_invnr(reg) or "?"
-        gemeente = _register_gemeente(reg) or "?"
-        naam = (reg.get("metadata") or {}).get("naam") or "?"
-        print(f"  {invnr:>6}  {gemeente:<20}  {naam}")
+        print(
+            f"  {row['invnr'] or '?':>6}  {row['gemeente'] or '?':<20}"
+            f"  {row['n_scans']:>6}  {row['register_name'] or '?'}"
+        )
     print()
 
     if csv_out:
         with open(csv_out, "w", newline="", encoding="utf-8") as f:
-            writer = csv.DictWriter(f, fieldnames=["invnr", "gemeente", "register_name"])
+            writer = csv.DictWriter(f, fieldnames=LIST_FIELDS)
             writer.writeheader()
-            for reg in registers:
-                writer.writerow(
-                    {
-                        "invnr": _register_invnr(reg),
-                        "gemeente": _register_gemeente(reg),
-                        "register_name": (reg.get("metadata") or {}).get("naam") or "",
-                    }
-                )
-        print(f"Wrote {len(registers)} rows to {csv_out}\n")
+            writer.writerows(rows)
+        print(f"Wrote {len(rows)} rows to {csv_out}\n")
 
 
 def _download_file(session: requests.Session, url: str, dest: Path) -> str:
@@ -228,6 +288,8 @@ def main(
     list_invnrs: bool = False,
     csv_out: str | None = None,
     out_dir: Path | None = None,
+    only_digitized: bool = False,
+    count_scans: bool = False,
 ) -> None:
     if out_dir is not None:
         paths.set_out_dir(out_dir)
@@ -245,8 +307,19 @@ def main(
         print(f"Filtered to {len(registers)} registers matching --invnr.")
 
     if list_invnrs:
-        _list_registers(registers, csv_out=csv_out)
+        counts: dict[str, int | None] | None = None
+        if count_scans:
+            print(f"Counting scans for {len(registers)} registers …")
+            counts = {reg.get("id") or "": _count_scans(session, reg) for reg in registers}
+        _list_registers(registers, csv_out=csv_out, counts=counts, only_digitized=only_digitized)
         return
+
+    if only_digitized:
+        # Free: the register listing already says which registers have assets,
+        # so the empty ones are dropped before they cost a /deed + /person pair.
+        kept = [r for r in registers if _register_is_digitized(r)]
+        print(f"--only-digitized: {len(kept)} of {len(registers)} registers have scans.")
+        registers = kept
 
     done = _load_done()
     progress_csv = _progress_csv()
@@ -304,7 +377,15 @@ def main(
                 progress.flush()
                 n_scans += n_done
 
-            print(f"      ✓ {n_scans} scans", flush=True)
+            # The suffix keys off what the register *holds*, not off what this
+            # run downloaded: a fully resumed register also downloads nothing.
+            n_deeds_with_scans = sum(1 for d in deeds if d.get("asset"))
+            print(
+                f"      ✓ {gemeente} {invnr or '?'}: {len(deeds)} deeds, "
+                f"{n_deeds_with_scans} with scans, {n_scans} scans fetched"
+                f"{listing.summary_suffix(n_deeds_with_scans)}",
+                flush=True,
+            )
             time.sleep(REQUEST_SLEEP)
 
     print("Drents Archief pipeline finished.")

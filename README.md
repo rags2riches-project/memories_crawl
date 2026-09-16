@@ -73,24 +73,86 @@ memories-crawl gelderland
 
 ## Filtering and listing inventory numbers
 
-Three flags let you scope downloads instead of pulling the entire archive:
+Five flags let you scope downloads instead of pulling the entire archive:
 
 ### `--list-invnrs` — see what's available
 
-Prints all digitized inventory numbers (with kantoor, description, date range, and page count where available) and exits without downloading anything.
+Prints every inventory number with its kantoor, description, date range and a
+**scan count**, then exits without downloading anything.
 
 ```bash
-# List all digitized invnrs for an archive
+# List all invnrs for an archive
 uv run memories-crawl limburg --list-invnrs
 uv run memories-crawl gelderland --list-invnrs
 uv run memories-crawl drentsarchief --list-invnrs
 ```
+
+```
+   invnr  kantoor         persons  w/scans  register name
+  ------  --------------  -------  -------  -------------
+   14008  Sneek                 ?        ?  Memories kantoor Sneek
+   12038  Lemmer                ?        0  Memories kantoor Lemmer
+```
+
+The count column tells you what a register is worth *before* you spend anything
+on it — Tresoar, for example, indexes roughly twice as many registers as it has
+digitized. Its meaning per archive:
+
+| value | meaning |
+|---|---|
+| a number | exact: that many scans/pages/persons-with-a-scan |
+| `0` | exact: the archive says this inventory number has no scans at all |
+| `?` | unknown — the archive would charge an extra request per register to say |
+
+**`?` is never a zero.** `--only-digitized` drops the known zeroes and keeps the
+unknowns, so it can't hide data that simply wasn't measured. Use `--count-scans`
+to resolve the `?` values (see below).
 
 For the API-backed archives (Drenthe, BHIC, Friesland) and for archives with a cached
 inventory (Limburg, Gelderland, Zeeland), this runs in about a second without launching a
 browser. For the others (Overijssel, Utrecht, Noord-Holland), it needs the Playwright
 token-harvest pass first — but cached tokens are reused on reruns, as long as the later
 run uses the same `--out-dir`.
+
+### `--only-digitized` — skip what has no scans
+
+Drops every inventory number known to have no scans, both in `--list-invnrs`
+output and during a real download run. For the archives whose listing already
+carries the digitized flag this is free and saves the wasted requests outright:
+
+```bash
+uv run memories-crawl friesland --list-invnrs --only-digitized   # 557 of 1,107 registers
+uv run memories-crawl nationaalarchief --only-digitized          # skips 721 empty invnrs
+```
+
+An inventory number whose count is `?` is always kept.
+
+### `--count-scans` — resolve the `?` counts
+
+Turns every `?` in the listing into an exact number. This is opt-in because it
+costs roughly one extra request per inventory number — and for the MAIS archives
+a Playwright token harvest — which is exactly what `--list-invnrs` exists to
+avoid. Pair it with `--invnr` to price a shortlist cheaply:
+
+```bash
+uv run memories-crawl friesland --list-invnrs --count-scans --invnr 12038 --invnr 14008
+```
+
+```
+   invnr  kantoor         persons  w/scans  register name
+  ------  --------------  -------  -------  -------------
+   14008  Sneek               166      166  Memories kantoor Sneek
+   12038  Lemmer               79        0  Memories kantoor Lemmer
+```
+
+| Archive | count column | free | with `--count-scans` |
+|---|---|---|---|
+| friesland | `n_persons`, `n_with_scans` | digitized flag on the register (`0` or `?`) | one `/person` count + a `/deed` walk per register |
+| bhic | `n_scans` | digitized flag on the register (`0` or `?`) | one `/asset` count request per register |
+| drentsarchief | `n_scans` | digitized flag on the register (`0` or `?`) | one `/asset` count request per register |
+| nationaalarchief | `n_scans` | `<dao>` marker in the EAD XML (`0` or `?`) | one viewer page fetch per invnr |
+| overijssel, utrechtsarchief, noordholland | `pages` | exact — the token harvest runs anyway | (nothing left to resolve) |
+| limburg, zeeland, gelderland | `pages` | exact from a warm token cache, else `?` | Playwright token harvest |
 
 ### `--csv` — export listing to a spreadsheet
 
@@ -106,18 +168,21 @@ uv run memories-crawl zeeland --list-invnrs --csv
 uv run memories-crawl gelderland --list-invnrs --csv my-output.csv
 ```
 
+The CSV columns are the same as the printed table, count column included; an
+unknown count is written as `?` there too.
+
 | Archive | CSV columns |
 |---|---|
-| friesland | `invnr, kantoor, register_name` |
-| nationaalarchief | `invnr` |
-| drentsarchief | `invnr, gemeente, register_name` |
-| bhic | `invnr, gemeente, register_name` |
+| friesland | `invnr, kantoor, register_name, n_persons, n_with_scans` |
+| nationaalarchief | `invnr, kantoor, n_scans` |
+| drentsarchief | `invnr, gemeente, register_name, n_scans` |
+| bhic | `invnr, gemeente, register_name, n_scans` |
 | overijssel | `kantoor, invnr, pages` |
 | utrechtsarchief | `kantoor, section, invnr, description, pages` |
-| limburg | `code, invnr, place_or_kantoor, datering, title` |
+| limburg | `code, invnr, place_or_kantoor, datering, pages, title` |
 | noordholland | `kantoor, period, invnr, description, pages` |
-| zeeland | `kantoor, invnr, description` |
-| gelderland | `kantoor, code, invnr, description` |
+| zeeland | `kantoor, invnr, description, pages` |
+| gelderland | `kantoor, code, invnr, description, pages` |
 
 ### `--invnr` — download a specific volume
 

@@ -41,7 +41,7 @@ from pathlib import Path
 
 import requests
 
-from memories_crawl import paths
+from memories_crawl import listing, paths
 
 ARCHIVE_NAME = "Historisch Centrum Overijssel"
 ARCHIVE_NUMBER = "0136.4"
@@ -303,6 +303,8 @@ def main(
     list_invnrs: bool = False,
     csv_out: str | None = None,
     out_dir: Path | None = None,
+    only_digitized: bool = False,
+    count_scans: bool = False,
 ) -> None:
     if out_dir is not None:
         paths.set_out_dir(out_dir)
@@ -333,16 +335,22 @@ def main(
 
         # --list-invnrs: print and skip download for this kantoor
         if list_invnrs:
+            # Page counts are exact here: the token harvest that feeds them has
+            # to run before anything can be downloaded anyway, so --count-scans
+            # has nothing left to resolve.
             print(f"\n{kantoor}:")
             print(f"  {'invnr':>6}  pages")
             print(f"  {'------':>6}  -----")
             for invnr in sorted(invnr_pages.keys()):
-                print(f"  {invnr:>6}  {len(invnr_pages[invnr]):>5}")
+                pages_here = len(invnr_pages[invnr])
+                if only_digitized and not listing.has_scans(pages_here):
+                    continue
+                print(f"  {invnr:>6}  {pages_here:>5}")
                 csv_rows.append(
                     {
                         "kantoor": kantoor,
                         "invnr": invnr,
-                        "pages": len(invnr_pages[invnr]),
+                        "pages": pages_here,
                     }
                 )
             continue

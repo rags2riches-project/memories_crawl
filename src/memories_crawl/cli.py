@@ -32,11 +32,20 @@ def _run_friesland(
     list_invnrs: bool = False,
     csv_out: str | None = None,
     out_dir: Path | None = None,
+    only_digitized: bool = False,
+    count_scans: bool = False,
 ) -> None:
     print("=== Friesland pipeline (Tresoar / AlleFriezen, Memorix API) ===")
     from memories_crawl.friesland import main as run
 
-    run(invnrs=invnrs, list_invnrs=list_invnrs, csv_out=csv_out, out_dir=out_dir)
+    run(
+        invnrs=invnrs,
+        list_invnrs=list_invnrs,
+        csv_out=csv_out,
+        out_dir=out_dir,
+        only_digitized=only_digitized,
+        count_scans=count_scans,
+    )
 
 
 def _run_nationaalarchief(
@@ -44,11 +53,20 @@ def _run_nationaalarchief(
     list_invnrs: bool = False,
     csv_out: str | None = None,
     out_dir: Path | None = None,
+    only_digitized: bool = False,
+    count_scans: bool = False,
 ) -> None:
     print("=== Nationaal Archief pipeline (Zuid-Holland, access 3.06.05) ===")
     from memories_crawl.nationaalarchief import main as run
 
-    run(invnrs=invnrs, list_invnrs=list_invnrs, csv_out=csv_out, out_dir=out_dir)
+    run(
+        invnrs=invnrs,
+        list_invnrs=list_invnrs,
+        csv_out=csv_out,
+        out_dir=out_dir,
+        only_digitized=only_digitized,
+        count_scans=count_scans,
+    )
 
 
 def _run_drentsarchief(
@@ -56,11 +74,20 @@ def _run_drentsarchief(
     list_invnrs: bool = False,
     csv_out: str | None = None,
     out_dir: Path | None = None,
+    only_digitized: bool = False,
+    count_scans: bool = False,
 ) -> None:
     print("=== Drents Archief pipeline (Memorix API) ===")
     from memories_crawl.drentsarchief import main as run
 
-    run(invnrs=invnrs, list_invnrs=list_invnrs, csv_out=csv_out, out_dir=out_dir)
+    run(
+        invnrs=invnrs,
+        list_invnrs=list_invnrs,
+        csv_out=csv_out,
+        out_dir=out_dir,
+        only_digitized=only_digitized,
+        count_scans=count_scans,
+    )
 
 
 def _run_bhic(
@@ -68,11 +95,20 @@ def _run_bhic(
     list_invnrs: bool = False,
     csv_out: str | None = None,
     out_dir: Path | None = None,
+    only_digitized: bool = False,
+    count_scans: bool = False,
 ) -> None:
     print("=== BHIC pipeline (Noord-Brabant, Memorix API) ===")
     from memories_crawl.bhic import main as run
 
-    run(invnrs=invnrs, list_invnrs=list_invnrs, csv_out=csv_out, out_dir=out_dir)
+    run(
+        invnrs=invnrs,
+        list_invnrs=list_invnrs,
+        csv_out=csv_out,
+        out_dir=out_dir,
+        only_digitized=only_digitized,
+        count_scans=count_scans,
+    )
 
 
 def _run_overijssel(
@@ -80,11 +116,20 @@ def _run_overijssel(
     list_invnrs: bool = False,
     csv_out: str | None = None,
     out_dir: Path | None = None,
+    only_digitized: bool = False,
+    count_scans: bool = False,
 ) -> None:
     print("=== Overijssel pipeline (INCOMPLETE – see python/overijssel.py) ===")
     from memories_crawl.overijssel import main as run
 
-    run(invnrs=invnrs, list_invnrs=list_invnrs, csv_out=csv_out, out_dir=out_dir)
+    run(
+        invnrs=invnrs,
+        list_invnrs=list_invnrs,
+        csv_out=csv_out,
+        out_dir=out_dir,
+        only_digitized=only_digitized,
+        count_scans=count_scans,
+    )
 
 
 def _run_utrechtsarchief(
@@ -92,11 +137,20 @@ def _run_utrechtsarchief(
     list_invnrs: bool = False,
     csv_out: str | None = None,
     out_dir: Path | None = None,
+    only_digitized: bool = False,
+    count_scans: bool = False,
 ) -> None:
     print("=== Utrechts Archief pipeline ===")
     from memories_crawl.utrechtsarchief import main as run
 
-    run(invnrs=invnrs, list_invnrs=list_invnrs, csv_out=csv_out, out_dir=out_dir)
+    run(
+        invnrs=invnrs,
+        list_invnrs=list_invnrs,
+        csv_out=csv_out,
+        out_dir=out_dir,
+        only_digitized=only_digitized,
+        count_scans=count_scans,
+    )
 
 
 def _run_limburg(
@@ -104,11 +158,20 @@ def _run_limburg(
     list_invnrs: bool = False,
     csv_out: str | None = None,
     out_dir: Path | None = None,
+    only_digitized: bool = False,
+    count_scans: bool = False,
 ) -> None:
     print("=== Limburg pipeline (RHCL, archieven.nl MAIS) ===")
     from memories_crawl.limburg import main as run
 
-    run(invnrs=invnrs, list_invnrs=list_invnrs, csv_out=csv_out, out_dir=out_dir)
+    run(
+        invnrs=invnrs,
+        list_invnrs=list_invnrs,
+        csv_out=csv_out,
+        out_dir=out_dir,
+        only_digitized=only_digitized,
+        count_scans=count_scans,
+    )
 
 
 def _run_noordholland(
@@ -116,11 +179,20 @@ def _run_noordholland(
     list_invnrs: bool = False,
     csv_out: str | None = None,
     out_dir: Path | None = None,
+    only_digitized: bool = False,
+    count_scans: bool = False,
 ) -> None:
     print("=== Noord-Holland pipeline (Noord-Hollands Archief) ===")
     from memories_crawl.noordholland import main as run
 
-    run(invnrs=invnrs, list_invnrs=list_invnrs, csv_out=csv_out, out_dir=out_dir)
+    run(
+        invnrs=invnrs,
+        list_invnrs=list_invnrs,
+        csv_out=csv_out,
+        out_dir=out_dir,
+        only_digitized=only_digitized,
+        count_scans=count_scans,
+    )
 
 
 def _run_zeeland(
@@ -128,11 +200,20 @@ def _run_zeeland(
     list_invnrs: bool = False,
     csv_out: str | None = None,
     out_dir: Path | None = None,
+    only_digitized: bool = False,
+    count_scans: bool = False,
 ) -> None:
     print("=== Zeeland pipeline (Zeeuws Archief) ===")
     from memories_crawl.zeeland import main as run
 
-    run(invnrs=invnrs, list_invnrs=list_invnrs, csv_out=csv_out, out_dir=out_dir)
+    run(
+        invnrs=invnrs,
+        list_invnrs=list_invnrs,
+        csv_out=csv_out,
+        out_dir=out_dir,
+        only_digitized=only_digitized,
+        count_scans=count_scans,
+    )
 
 
 def _run_gelderland(
@@ -140,11 +221,20 @@ def _run_gelderland(
     list_invnrs: bool = False,
     csv_out: str | None = None,
     out_dir: Path | None = None,
+    only_digitized: bool = False,
+    count_scans: bool = False,
 ) -> None:
     print("=== Gelderland pipeline (Gelders Archief) ===")
     from memories_crawl.gelderland import main as run
 
-    run(invnrs=invnrs, list_invnrs=list_invnrs, csv_out=csv_out, out_dir=out_dir)
+    run(
+        invnrs=invnrs,
+        list_invnrs=list_invnrs,
+        csv_out=csv_out,
+        out_dir=out_dir,
+        only_digitized=only_digitized,
+        count_scans=count_scans,
+    )
 
 
 PIPELINES = {
@@ -195,6 +285,26 @@ def main() -> None:
         ),
     )
     parser.add_argument(
+        "--only-digitized",
+        action="store_true",
+        default=False,
+        help=(
+            "Skip inventarisnummers that are known to have no scans. Counts the "
+            "pipeline could not obtain are never treated as zero, so nothing is "
+            "hidden on a guess."
+        ),
+    )
+    parser.add_argument(
+        "--count-scans",
+        action="store_true",
+        default=False,
+        help=(
+            "Resolve the '?' counts in --list-invnrs exactly. Costs roughly one "
+            "extra request per inventarisnummer (a Playwright token harvest for "
+            "the MAIS archives), so it is opt-in."
+        ),
+    )
+    parser.add_argument(
         "--csv",
         dest="csv_out",
         nargs="?",
@@ -220,6 +330,8 @@ def main() -> None:
                 list_invnrs=args.list_invnrs,
                 csv_out=csv_path,
                 out_dir=out_dir,
+                only_digitized=args.only_digitized,
+                count_scans=args.count_scans,
             )
         except Exception as exc:
             print(f"ERROR in {name}: {exc}", file=sys.stderr)

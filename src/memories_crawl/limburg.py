@@ -60,7 +60,7 @@ from pathlib import Path
 
 import requests
 
-from memories_crawl import paths
+from memories_crawl import listing, paths
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -231,6 +231,9 @@ def _split_title(raw_title: str, axis: str) -> tuple[str, str]:
 # ---------------------------------------------------------------------------
 
 
+LIST_FIELDS = ["code", "invnr", "place_or_kantoor", "datering", "pages", "title"]
+
+
 def _inventory_cache_path(code: str) -> Path:
     return paths.cache_file(ARCHIVE, f"inventory_{code}.json")
 
@@ -380,6 +383,46 @@ def _harvest_tokens(page, code: str, invnr: int, minr: int) -> list[dict]:
     return sorted(by_key.values(), key=lambda r: r["page"])
 
 
+def _cached_page_count(code: str, invnr: int) -> int | None:
+    """Pages for one invnr from its token cache, or ``None`` when uncached.
+
+    Tokens are cached per inventarisnummer here, so a cache hit is an exact
+    count and a miss is genuinely unknown -- there is no partial-cache case to
+    misread as a zero.
+    """
+    tokens = _load_json(_tokens_cache_path(code, invnr))
+    return len(tokens) if isinstance(tokens, list) else None
+
+
+def _harvest_all_tokens(code: str, items: list[dict]) -> None:
+    """Fill the token cache for every uncached invnr of one archive code.
+
+    One Playwright session is shared across all invnrs; individual page
+    navigations reuse the same browser context.
+    """
+    from playwright.sync_api import sync_playwright  # noqa: PLC0415
+
+    if all(_tokens_cache_path(code, it["invnr"]).exists() for it in items):
+        print(f"\n  {code}: all token caches present, skipping Playwright.")
+        return
+
+    print(f"\n  {code}: harvesting tokens for {len(items)} registers …")
+    with sync_playwright() as pw:
+        browser = pw.chromium.launch(headless=True)
+        page = browser.new_page()
+        for idx, it in enumerate(items, 1):
+            if _tokens_cache_path(code, it["invnr"]).exists():
+                continue
+            print(
+                f"    [{idx:>3}/{len(items)}] invnr {it['invnr']} "
+                f"({it['name']}, {it['datering']}) …",
+                flush=True,
+            )
+            toks = _ensure_tokens(page, code, it["invnr"], it["minr"])
+            print(f"        → {len(toks)} pages")
+        browser.close()
+
+
 def _ensure_tokens(page, code: str, invnr: int, minr: int) -> list[dict]:
     """Return cached tokens or harvest fresh ones, caching the result."""
     cache = _tokens_cache_path(code, invnr)
@@ -450,6 +493,8 @@ def main(
     list_invnrs: bool = False,
     csv_out: str | None = None,
     out_dir: Path | None = None,
+    only_digitized: bool = False,
+    count_scans: bool = False,
 ) -> None:
     if out_dir is not None:
         paths.set_out_dir(out_dir)
@@ -473,18 +518,31 @@ def main(
         total = sum(len(v) for v in inventories.values())
         print(f"\nFiltered to {total} items matching --invnr.")
 
-    # --list-invnrs (print table and exit, no Playwright or downloads)
+    # --list-invnrs (print table and exit, no downloads)
     if list_invnrs:
         csv_rows: list[dict] = []
         for code, items in inventories.items():
+            # Page counts come from the per-invnr token caches for free.
+            # Harvesting the missing ones means driving Playwright over every
+            # register, so that only happens under --count-scans.
+            if count_scans and items:
+                _harvest_all_tokens(code, items)
+
             axis = ARCHIVE_CODES[code]["axis"]
             print(f"\n{code} ({ARCHIVE_CODES[code]['title']}):")
-            print(f"  {'invnr':>6}  {axis:<20}  {'datering':<12}  title")
-            print(f"  {'------':>6}  {'-' * min(len(axis), 20):<20}  {'------------':<12}  -----")
+            print(f"  {'invnr':>6}  {axis:<20}  {'datering':<12}  {'pages':>6}  title")
+            print(
+                f"  {'------':>6}  {'-' * min(len(axis), 20):<20}  {'------------':<12}"
+                f"  {'------':>6}  -----"
+            )
             for it in items:
+                pages_here = _cached_page_count(code, it["invnr"])
+                if only_digitized and not listing.has_scans(pages_here):
+                    continue
                 print(
                     f"  {it['invnr']:>6}  {it['name']:<20}"
-                    f"  {it['datering']:<12}  {it['title'][:60]}"
+                    f"  {it['datering']:<12}  {listing.fmt_count(pages_here):>6}"
+                    f"  {it['title'][:60]}"
                 )
                 csv_rows.append(
                     {
@@ -492,58 +550,35 @@ def main(
                         "invnr": it["invnr"],
                         "place_or_kantoor": it.get("name", ""),
                         "datering": it.get("datering", ""),
+                        "pages": listing.fmt_count(pages_here),
                         "title": it.get("title", ""),
                     }
                 )
         print()
         if csv_out and csv_rows:
             with open(csv_out, "w", newline="", encoding="utf-8") as f:
-                writer = csv.DictWriter(
-                    f, fieldnames=["code", "invnr", "place_or_kantoor", "datering", "title"]
-                )
+                writer = csv.DictWriter(f, fieldnames=LIST_FIELDS)
                 writer.writeheader()
                 writer.writerows(csv_rows)
             print(f"Wrote {len(csv_rows)} rows to {csv_out}\n")
         return
 
     # Phase 2 + 3: token harvest per digitized invnr, then download.
-    # One Playwright session shared across all invnrs of a given code –
-    # individual page navigations reuse the same browser context.
-    from playwright.sync_api import sync_playwright  # noqa: PLC0415
-
     for code, items in inventories.items():
         if not items:
             print(f"\n  {code}: no digitized items, skipping.")
             continue
 
-        # Skip Playwright entirely if every invnr already has cached tokens.
-        need_playwright = any(not _tokens_cache_path(code, it["invnr"]).exists() for it in items)
-
-        if need_playwright:
-            print(f"\n  {code}: harvesting tokens for {len(items)} registers …")
-            with sync_playwright() as pw:
-                browser = pw.chromium.launch(headless=True)
-                page = browser.new_page()
-                for idx, it in enumerate(items, 1):
-                    cache = _tokens_cache_path(code, it["invnr"])
-                    if cache.exists():
-                        continue
-                    print(
-                        f"    [{idx:>3}/{len(items)}] invnr {it['invnr']} "
-                        f"({it['name']}, {it['datering']}) …",
-                        flush=True,
-                    )
-                    toks = _ensure_tokens(page, code, it["invnr"], it["minr"])
-                    print(f"        → {len(toks)} pages")
-                browser.close()
-        else:
-            print(f"\n  {code}: all token caches present, skipping Playwright.")
+        _harvest_all_tokens(code, items)
 
         # Download phase.
         print(f"\n  {code}: downloading scans …")
         totals = {"downloaded": 0, "exists": 0, "missing": 0}
         for it in items:
             tokens = _load_json(_tokens_cache_path(code, it["invnr"])) or []
+            if not tokens:
+                print(f"    invnr {it['invnr']}: 0 pages{listing.NOTHING_TO_DOWNLOAD}")
+                continue
             dest_dir = output_dir / code / str(it["invnr"])
             _write_metadata(dest_dir, code, it, len(tokens))
             for tok in tokens:

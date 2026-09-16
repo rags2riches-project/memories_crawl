@@ -38,7 +38,7 @@ from pathlib import Path
 
 import requests
 
-from memories_crawl import paths
+from memories_crawl import listing, paths
 
 API_BASE = "https://webservices.memorix.nl/genealogy"
 API_KEY = "aa030ec4-12d0-4dc0-afaf-b65fd6128b39"
@@ -97,6 +97,47 @@ def _paginate(session: requests.Session, path: str, fq: str, key: str) -> list[d
         page += 1
         time.sleep(REQUEST_SLEEP)
     return items
+
+
+def _count(session: requests.Session, path: str, fq: str) -> int:
+    """Exact number of hits for a filter, in a single request.
+
+    ``rows=1`` still reports ``pagination.total``, so a count costs one small
+    response instead of paging the whole result set.
+    """
+    data = _get_json(session, path, {"q": "*:*", "rows": 1, "page": 1, "fq": fq})
+    pagination = (data.get("metadata") or {}).get("pagination") or {}
+    return int(pagination.get("total") or 0)
+
+
+def _register_is_digitized(register: dict) -> bool:
+    """Has Tresoar digitized this register?
+
+    Register search results carry a truncated ``asset`` sample, present exactly
+    when the register's deeds have scans (verified against 14 registers, no
+    disagreement). It comes with the register listing we already fetch, so the
+    "is there anything here at all?" question costs nothing extra.
+    """
+    return bool(register.get("asset"))
+
+
+def _register_counts(
+    session: requests.Session, register: dict, count_scans: bool
+) -> tuple[int | None, int | None]:
+    """Return ``(n_persons, n_with_scans)`` for one register.
+
+    Without ``--count-scans`` this stays free: an undigitized register is an
+    exact ``(?, 0)`` and everything else an honest ``(?, ?)``. With it, the
+    counts are exact and cost one ``/person`` count plus a ``/deed`` walk.
+    """
+    if not count_scans:
+        return None, (None if _register_is_digitized(register) else 0)
+    reg_id = register.get("id") or ""
+    if not reg_id:
+        return None, None
+    n_persons = _count(session, "/person", f"register_id:{reg_id}")
+    deeds = _paginate(session, "/deed", f"register_id:{reg_id}", "deed")
+    return n_persons, sum(1 for d in deeds if d.get("asset"))
 
 
 _SANITIZE_RE = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
@@ -210,32 +251,55 @@ def _load_done() -> set[str]:
     return done
 
 
-def _list_registers(registers: list[dict], csv_out: str | None = None) -> None:
-    """Print a table of available inventory numbers from register metadata."""
-    print(f"\n{'invnr':>6}  {'kantoor':<14}  register name")
-    print(f"{'------':>6}  {'--------------':<14}  {'-------------'}")
+LIST_FIELDS = ["invnr", "kantoor", "register_name", "n_persons", "n_with_scans"]
+
+
+def _list_registers(
+    registers: list[dict],
+    csv_out: str | None = None,
+    counts: dict[str, tuple[int | None, int | None]] | None = None,
+    only_digitized: bool = False,
+) -> None:
+    """Print a table of available inventory numbers from register metadata.
+
+    ``counts`` maps register id → ``(n_persons, n_with_scans)`` and is only
+    supplied under ``--count-scans``; otherwise the free digitized flag on the
+    register decides between an exact ``0`` and an unknown ``?``.
+    """
+    rows: list[dict] = []
     for reg in registers:
         rmd = reg.get("metadata") or {}
-        invnr = rmd.get("inventarisnummer") or "?"
-        kantoor = _kantoor_from_register(reg)
-        naam = rmd.get("naam") or "?"
-        print(f"  {invnr:>6}  {kantoor:<14}  {naam}")
+        if counts is not None:
+            n_persons, n_with_scans = counts.get(reg.get("id") or "", (None, None))
+        else:
+            n_persons, n_with_scans = None, (None if _register_is_digitized(reg) else 0)
+        if only_digitized and not listing.has_scans(n_with_scans):
+            continue
+        rows.append(
+            {
+                "invnr": rmd.get("inventarisnummer") or "",
+                "kantoor": _kantoor_from_register(reg),
+                "register_name": rmd.get("naam") or "",
+                "n_persons": listing.fmt_count(n_persons),
+                "n_with_scans": listing.fmt_count(n_with_scans),
+            }
+        )
+
+    print(f"\n  {'invnr':>6}  {'kantoor':<14}  {'persons':>7}  {'w/scans':>7}  register name")
+    print(f"  {'------':>6}  {'-' * 14:<14}  {'-------':>7}  {'-------':>7}  -------------")
+    for row in rows:
+        print(
+            f"  {row['invnr'] or '?':>6}  {row['kantoor']:<14}"
+            f"  {row['n_persons']:>7}  {row['n_with_scans']:>7}  {row['register_name'] or '?'}"
+        )
     print()
 
     if csv_out:
         with open(csv_out, "w", newline="", encoding="utf-8") as f:
-            writer = csv.DictWriter(f, fieldnames=["invnr", "kantoor", "register_name"])
+            writer = csv.DictWriter(f, fieldnames=LIST_FIELDS)
             writer.writeheader()
-            for reg in registers:
-                rmd = reg.get("metadata") or {}
-                writer.writerow(
-                    {
-                        "invnr": rmd.get("inventarisnummer") or "",
-                        "kantoor": _kantoor_from_register(reg),
-                        "register_name": rmd.get("naam") or "",
-                    }
-                )
-        print(f"Wrote {len(registers)} rows to {csv_out}\n")
+            writer.writerows(rows)
+        print(f"Wrote {len(rows)} rows to {csv_out}\n")
 
 
 def main(
@@ -243,6 +307,8 @@ def main(
     list_invnrs: bool = False,
     csv_out: str | None = None,
     out_dir: Path | None = None,
+    only_digitized: bool = False,
+    count_scans: bool = False,
 ) -> None:
     if out_dir is not None:
         paths.set_out_dir(out_dir)
@@ -262,8 +328,22 @@ def main(
         print(f"Filtered to {len(registers)} registers matching --invnr.")
 
     if list_invnrs:
-        _list_registers(registers, csv_out=csv_out)
+        counts: dict[str, tuple[int | None, int | None]] | None = None
+        if count_scans:
+            print(f"Counting persons and scans for {len(registers)} registers …")
+            counts = {
+                reg.get("id") or "": _register_counts(session, reg, True) for reg in registers
+            }
+        _list_registers(registers, csv_out=csv_out, counts=counts, only_digitized=only_digitized)
         return
+
+    if only_digitized:
+        # The register listing already says which registers Tresoar digitized,
+        # so the empty ones cost nothing to drop -- and dropping them saves the
+        # two /deed + /person round trips they would otherwise each consume.
+        kept = [r for r in registers if _register_is_digitized(r)]
+        print(f"--only-digitized: {len(kept)} of {len(registers)} registers have scans.")
+        registers = kept
 
     done = _load_done()
     progress_csv = _progress_csv()
@@ -313,6 +393,7 @@ def main(
             deed_by_id: dict[str, dict] = {d.get("id", ""): d for d in deeds}
 
             n_persons = 0
+            n_with_scans = 0
             for person in persons:
                 deed_id = person.get("deed_id") or ""
                 deed = deed_by_id.get(deed_id)
@@ -324,11 +405,17 @@ def main(
                 if pmd.get("type_title", "").lower() not in ("overledene", ""):
                     continue
 
+                # Download scan pages from the deed's embedded assets.
+                assets = deed.get("asset") or []
+                if only_digitized and not assets:
+                    # Otherwise this person gets a directory holding nothing but
+                    # a metadata.json with "n_scans": 0.
+                    n_persons += 1
+                    continue
+
                 slug = _person_slug(person)
                 dest_dir = output_dir / _sanitize(kantoor) / _sanitize(invnr) / slug
 
-                # Download scan pages from the deed's embedded assets.
-                assets = deed.get("asset") or []
                 n_done = 0
                 for asset_idx, asset in enumerate(assets, start=1):
                     url = asset.get("download") or ""
@@ -344,6 +431,8 @@ def main(
 
                 _write_person_metadata(dest_dir, person, deed, reg, n_done)
                 n_persons += 1
+                if n_done:
+                    n_with_scans += 1
 
             writer.writerow(
                 {
@@ -355,7 +444,11 @@ def main(
                 }
             )
             progress.flush()
-            print(f"      {n_persons} persons", flush=True)
+            print(
+                f"      {kantoor} {invnr}: {n_persons} persons, "
+                f"{n_with_scans} with scans{listing.summary_suffix(n_with_scans)}",
+                flush=True,
+            )
             time.sleep(REQUEST_SLEEP)
 
     print("Friesland pipeline finished.")

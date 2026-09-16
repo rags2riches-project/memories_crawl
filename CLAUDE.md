@@ -44,6 +44,7 @@ Every pipeline's `main()` takes `out_dir: Path | None = None` and calls
 |---|---|
 | `src/memories_crawl/cli.py` | CLI dispatcher |
 | `src/memories_crawl/paths.py` | Output root, per-archive scan dirs and cache paths |
+| `src/memories_crawl/listing.py` | `--list-invnrs` count vocabulary: the `?` unknown marker, `has_scans()`, the "nothing to download" suffix |
 | `src/memories_crawl/nationaalarchief.py` | Zuid-Holland: scrape viewer pages, download via UUID |
 | `src/memories_crawl/drentsarchief.py` | Drenthe: Memorix REST API, deed→asset chain |
 | `src/memories_crawl/bhic.py` | Noord-Brabant (BHIC): Memorix REST API, register→asset chain |
@@ -54,6 +55,43 @@ Every pipeline's `main()` takes `out_dir: Path | None = None` and calls
 | `src/memories_crawl/zeeland.py` | Zeeland: Playwright-based MAIS hybrid (inv3 discovery + inv2 strip harvest) |
 | `src/memories_crawl/friesland.py` | Friesland: Tresoar / AlleFriezen Memorix REST API, register→deed→person chain |
 | `src/memories_crawl/gelderland.py` | Gelderland: Playwright-based MAIS, one micode per kantoor (21 codes), strip auto-loads on inv2 minr |
+
+## Scan availability in `--list-invnrs`
+
+Every pipeline's listing carries a count column next to the inventarisnummer, in
+both the printed table and the `--csv` output. Counts are `int` internally and
+`None` when the archive would charge an extra request per register to produce
+them; `src/memories_crawl/listing.py` renders `None` as `?`.
+
+**A `?` must never become a `0`.** `listing.has_scans(count)` (`count != 0`) is the
+only filter `--only-digitized` uses, so an unmeasured register is kept, not hidden.
+Beware the partial token caches in `gelderland`/`zeeland`: an invnr missing from a
+*complete* cache really has no pages, but one missing from a `_partial.json` was
+simply never harvested — `_cached_page_counts()` returns a `complete` flag for
+exactly this reason.
+
+| Archive | column(s) | free source | `--count-scans` cost |
+|---|---|---|---|
+| friesland | `n_persons`, `n_with_scans` | `register["asset"]` non-empty ⇒ digitized (verified on 14 registers, 0 disagreements) | 1 `/person` count + a `/deed` walk per register |
+| bhic | `n_scans` | `register["asset"]` non-empty | 1 `/asset?rows=1` per register (`pagination.total`) |
+| drentsarchief | `n_scans` | `register["asset"]` non-empty (553 of 557) | 1 `/asset?rows=1` per register — `/asset` is queryable by `register_id` even though assets hang off the deeds |
+| nationaalarchief | `kantoor`, `n_scans` | `did/dao` METS link in the EAD XML: 3,237 of 3,958 items digitized (spot-checked, no-`dao` ⇒ 0 scans) | 1 viewer page fetch per invnr |
+| overijssel, utrechtsarchief, noordholland | `pages` | exact — the token harvest is mandatory anyway | n/a |
+| limburg, zeeland, gelderland | `pages` | warm token cache, else `?` | full Playwright token harvest |
+
+Memorix pagination trick: `rows=1` still reports `metadata.pagination.total`, so an
+exact count is one small response rather than a full paging walk. Do not page the
+whole result set just to `len()` it.
+
+Every pipeline's `main()` takes `only_digitized: bool = False` and
+`count_scans: bool = False`; the CLI exposes them as `--only-digitized` and
+`--count-scans`.
+
+Download runs print one summary line per register so a zero-yield register is
+visible in the log rather than inferred from the filesystem, e.g.
+`Lemmer 12038: 79 persons, 0 with scans — nothing to download`. The suffix keys
+off what the register *holds*, not off what the current run fetched: a fully
+resumed register downloads nothing and must not be labelled empty.
 
 ## Exclusion rule
 
