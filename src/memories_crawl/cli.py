@@ -32,11 +32,18 @@ def _run_friesland(
     list_invnrs: bool = False,
     csv_out: str | None = None,
     out_dir: Path | None = None,
+    refresh_cache: bool = False,
 ) -> None:
     print("=== Friesland pipeline (Tresoar / AlleFriezen, Memorix API) ===")
     from memories_crawl.friesland import main as run
 
-    run(invnrs=invnrs, list_invnrs=list_invnrs, csv_out=csv_out, out_dir=out_dir)
+    run(
+        invnrs=invnrs,
+        list_invnrs=list_invnrs,
+        csv_out=csv_out,
+        out_dir=out_dir,
+        refresh_cache=refresh_cache,
+    )
 
 
 def _run_nationaalarchief(
@@ -44,11 +51,18 @@ def _run_nationaalarchief(
     list_invnrs: bool = False,
     csv_out: str | None = None,
     out_dir: Path | None = None,
+    refresh_cache: bool = False,
 ) -> None:
     print("=== Nationaal Archief pipeline (Zuid-Holland, access 3.06.05) ===")
     from memories_crawl.nationaalarchief import main as run
 
-    run(invnrs=invnrs, list_invnrs=list_invnrs, csv_out=csv_out, out_dir=out_dir)
+    run(
+        invnrs=invnrs,
+        list_invnrs=list_invnrs,
+        csv_out=csv_out,
+        out_dir=out_dir,
+        refresh_cache=refresh_cache,
+    )
 
 
 def _run_drentsarchief(
@@ -56,11 +70,18 @@ def _run_drentsarchief(
     list_invnrs: bool = False,
     csv_out: str | None = None,
     out_dir: Path | None = None,
+    refresh_cache: bool = False,
 ) -> None:
     print("=== Drents Archief pipeline (Memorix API) ===")
     from memories_crawl.drentsarchief import main as run
 
-    run(invnrs=invnrs, list_invnrs=list_invnrs, csv_out=csv_out, out_dir=out_dir)
+    run(
+        invnrs=invnrs,
+        list_invnrs=list_invnrs,
+        csv_out=csv_out,
+        out_dir=out_dir,
+        refresh_cache=refresh_cache,
+    )
 
 
 def _run_bhic(
@@ -68,11 +89,18 @@ def _run_bhic(
     list_invnrs: bool = False,
     csv_out: str | None = None,
     out_dir: Path | None = None,
+    refresh_cache: bool = False,
 ) -> None:
     print("=== BHIC pipeline (Noord-Brabant, Memorix API) ===")
     from memories_crawl.bhic import main as run
 
-    run(invnrs=invnrs, list_invnrs=list_invnrs, csv_out=csv_out, out_dir=out_dir)
+    run(
+        invnrs=invnrs,
+        list_invnrs=list_invnrs,
+        csv_out=csv_out,
+        out_dir=out_dir,
+        refresh_cache=refresh_cache,
+    )
 
 
 def _run_overijssel(
@@ -160,6 +188,11 @@ PIPELINES = {
     "gelderland": _run_gelderland,
 }
 
+#: Pipelines whose archive-level inventory listing is cached on disk, and which
+#: therefore accept ``--refresh-cache``.  The Playwright-driven ones keep their
+#: own inventory/token caches and are not covered by that flag.
+CACHED_LISTING_PIPELINES = frozenset({"friesland", "nationaalarchief", "drentsarchief", "bhic"})
+
 
 def main() -> None:
     parser = argparse.ArgumentParser(
@@ -195,6 +228,16 @@ def main() -> None:
         ),
     )
     parser.add_argument(
+        "--refresh-cache",
+        action="store_true",
+        default=False,
+        help=(
+            "Re-collect the archive-level inventory listing instead of reusing "
+            "the cached one (friesland, nationaalarchief, drentsarchief, bhic; "
+            "the cache expires after 30 days by itself)."
+        ),
+    )
+    parser.add_argument(
         "--csv",
         dest="csv_out",
         nargs="?",
@@ -214,13 +257,16 @@ def main() -> None:
         csv_path: str | None = None
         if args.csv_out is not None:
             csv_path = f"{name}_invnrs.csv" if args.csv_out == "__default__" else args.csv_out
+        kwargs: dict = {
+            "invnrs": invnr_filter,
+            "list_invnrs": args.list_invnrs,
+            "csv_out": csv_path,
+            "out_dir": out_dir,
+        }
+        if name in CACHED_LISTING_PIPELINES:
+            kwargs["refresh_cache"] = args.refresh_cache
         try:
-            PIPELINES[name](
-                invnrs=invnr_filter,
-                list_invnrs=args.list_invnrs,
-                csv_out=csv_path,
-                out_dir=out_dir,
-            )
+            PIPELINES[name](**kwargs)
         except Exception as exc:
             print(f"ERROR in {name}: {exc}", file=sys.stderr)
             if args.pipeline != "all":
