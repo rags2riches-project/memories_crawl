@@ -222,6 +222,69 @@ harvest — by far the slowest part of the MAIS pipelines — silently runs twic
 
 ---
 
+## What a run reports
+
+A full crawl runs for hours and writes hundreds of gigabytes, so every run says
+how much it is about to do and how much it did.
+
+Wherever the page list is known before downloading starts — the MAIS pipelines
+(Gelderland, Overijssel, Utrecht, Limburg, Noord-Holland, Zeeland) harvest it
+during the token phase — each kantoor opens with the size of what follows, and
+each register reports its own outcome as it completes:
+
+```
+============================================================
+  [2/21] Kantoor Borculo  (code 0022)
+============================================================
+  49 inventarisnummers with scans
+  → about to download 1,823 pages across 49 registers in Borculo (code 0022)
+  invnr 1 (1  1818 eerste halfjaar) 38 pages (38 new, 0 existing, 0 missing, 21.7 MB)
+  invnr 2 (2  1818 tweede halfjaar) 41 pages (0 new, 41 existing, 0 missing)
+  …
+  Kantoor totals: 1,823 pages (1,782 new, 41 existing, 0 missing, 1.0 GB)
+```
+
+Each archive closes with a summary of what this run cost:
+
+```
+===== Gelderland: run summary =====
+  kantoren processed               21
+  registers processed           1,102
+  pages downloaded             98,412
+  pages already present           120
+  pages missing                    17
+  bytes written               56.1 GB
+```
+
+`pages already present` are the ones a resumed run found on disk and did not
+fetch; `pages missing` are the ones the server refused (404/202, or a download
+that failed every retry). `bytes written` counts only pages this run actually
+fetched — bytes per page vary 36× across archives (Overijssel ~93 KB, Nationaal
+Archief ~3.4 MB), so the figure is measured, never extrapolated.
+
+`memories-crawl all` adds a table across the ten archives:
+
+```
+===== ALL ARCHIVES: grand total =====
+  archive                           kantoren  registers     pages       bytes
+  ---------------------------------------------------------------------------
+  Gelderland                              21      1,102    98,412     56.1 GB
+  Zeeland                                  9      4,471    12,004      7.8 GB
+  Zuid-Holland (Nationaal Archief)         -         82     5,741     19.5 GB
+  ---------------------------------------------------------------------------
+  3 archives                              30      5,655   116,157     83.4 GB
+  190 pages already present, 17 missing.
+  INCOMPLETE (stopped by an error): Zeeland
+```
+
+`all` keeps going when one archive fails, so a pipeline that stopped halfway
+still reports the part it finished and is flagged `INCOMPLETE` in both its own
+block and the table. Figures always describe the run in front of you: under
+`--invnr` they cover only the selected registers, and a run that found
+everything already downloaded reports zeroes.
+
+---
+
 ## Pipelines in detail
 
 ### Friesland – Tresoar / AlleFriezen

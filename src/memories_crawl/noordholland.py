@@ -45,6 +45,7 @@ from pathlib import Path
 import requests
 
 from memories_crawl import filters, paths
+from memories_crawl.summary import PageTally, RunSummary, announce
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -523,7 +524,7 @@ def main(
     csv_out: str | None = None,
     out_dir: Path | None = None,
     kantoren: set[str] | None = None,
-) -> None:
+) -> RunSummary | None:
     kantoor_filter = filters.normalize(kantoren)
 
     if out_dir is not None:
@@ -547,6 +548,10 @@ def main(
     print(f"Harvesting page tokens for {len(sections)} period sections")
     print(f"{'=' * 60}")
 
+    # Sections are kantoor+period pairs, so the kantoren are counted by name.
+    summary = RunSummary(ARCHIVE, "Noord-Holland", unit_name="kantoren")
+    kantoren_seen: set[str] = set()
+
     # done.txt records whole period sections, which is only ever accurate for
     # an unfiltered run: under --invnr we fetch a subset, so writing the marker
     # would make every later run skip the rest of the section.
@@ -565,7 +570,6 @@ def main(
             f.write(f"{key}\n")
 
     matched_any = False
-    grand_downloaded = grand_skipped = grand_missing = 0
 
     for section_idx, section in enumerate(sections):
         period_minr = section["period_minr"]
@@ -638,7 +642,12 @@ def main(
                 )
             continue
 
-        downloaded = skipped = missing = 0
+        announce(sum(len(v) for v in invnr_pages.values()), len(invnr_pages), kantoor)
+        kantoren_seen.add(kantoor)
+        summary.units = len(kantoren_seen)
+        summary.registers += len(invnr_pages)
+
+        section_tally = PageTally()
         for invnr, inv_pages in sorted(invnr_pages.items()):
             inv_text = invnr_texts.get(invnr, "")
             # Clean kantoor name for folder use
@@ -648,33 +657,21 @@ def main(
 
             _write_metadata(dest_dir, kantoor, invnr, inv_text, len(inv_pages))
 
-            inv_downloaded = inv_skipped = inv_missing = 0
+            tally = PageTally()
             for p in sorted(inv_pages, key=lambda x: x["page"]):
                 url = _fullsize_url(p["thumb_url"])
                 dest = dest_dir / f"{p['page']:04d}.jpg"
-                status = _download_file(session, url, dest)
-                if status == "downloaded":
-                    inv_downloaded += 1
-                elif status == "exists":
-                    inv_skipped += 1
-                else:
-                    inv_missing += 1
+                tally.record(_download_file(session, url, dest), dest)
                 time.sleep(0.15)
 
-            print(
-                f"{len(inv_pages)} pages "
-                f"({inv_downloaded} new, {inv_skipped} existing, {inv_missing} missing)"
-            )
+            print(tally.describe(len(inv_pages)))
 
-            downloaded += inv_downloaded
-            skipped += inv_skipped
-            missing += inv_missing
+            # Fold in per register, not per section, so a run that dies midway
+            # still reports everything it downloaded.
+            section_tally += tally
+            summary.pages += tally
 
-        print(f"  Section totals: {downloaded} new, {skipped} existing, {missing} missing")
-
-        grand_downloaded += downloaded
-        grand_skipped += skipped
-        grand_missing += missing
+        print(f"  Section totals: {section_tally.describe()}")
 
         mark_done(str(period_minr))
 
@@ -696,11 +693,8 @@ def main(
             print(f"Wrote {len(csv_rows)} rows to {csv_out}\n")
         return
 
-    print("\n===== COMPLETE =====")
-    print(
-        f"Total: {grand_downloaded} downloaded, {grand_skipped} existing, {grand_missing} missing"
-    )
-    print("Done (Noord-Holland).")
+    summary.report()
+    return summary
 
 
 if __name__ == "__main__":

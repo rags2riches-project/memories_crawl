@@ -42,6 +42,7 @@ from pathlib import Path
 import requests
 
 from memories_crawl import filters, paths
+from memories_crawl.summary import PageTally, RunSummary, announce
 
 ARCHIVE_NAME = "Historisch Centrum Overijssel"
 ARCHIVE_NUMBER = "0136.4"
@@ -323,7 +324,7 @@ def main(
     csv_out: str | None = None,
     out_dir: Path | None = None,
     kantoren: set[str] | None = None,
-) -> None:
+) -> RunSummary | None:
     kantoor_filter = filters.normalize(kantoren)
 
     if out_dir is not None:
@@ -335,6 +336,7 @@ def main(
     session.headers["User-Agent"] = USER_AGENT
 
     csv_rows: list[dict] = []
+    summary = RunSummary(ARCHIVE, "Overijssel", unit_name="kantoren")
     matched_any = False
 
     for kantoor, minr in KANTOOR_MINR.items():
@@ -381,25 +383,29 @@ def main(
                 )
             continue
 
-        downloaded = 0
-        skipped = 0
-        missing = 0
+        n_pages = sum(len(v) for v in invnr_pages.values())
+        announce(n_pages, len(invnr_pages), kantoor, indent="    ")
+        summary.units += 1
+        summary.registers += len(invnr_pages)
+
+        kantoor_tally = PageTally()
         for invnr, inv_pages in sorted(invnr_pages.items()):
             dest_dir = output_dir / kantoor / str(invnr)
             _write_metadata(dest_dir, kantoor, invnr, len(inv_pages))
+            tally = PageTally()
             for p in inv_pages:
                 dest = dest_dir / f"{p['page']:04d}.jpg"
                 url = _image_url(invnr, p["page"], p["miahd"], p["rdt"], p["open"])
-                status = _download_file(session, url, dest)
-                if status == "downloaded":
-                    downloaded += 1
-                elif status == "exists":
-                    skipped += 1
-                else:
-                    missing += 1
+                tally.record(_download_file(session, url, dest), dest)
                 time.sleep(0.15)
 
-        print(f"    {kantoor}: {downloaded} downloaded, {skipped} existing, {missing} missing")
+            print(f"    invnr {invnr} {tally.describe(len(inv_pages))}", flush=True)
+            # Fold in per register, not per kantoor, so a run that dies midway
+            # still reports everything it downloaded.
+            kantoor_tally += tally
+            summary.pages += tally
+
+        print(f"    {kantoor}: {kantoor_tally.describe()}")
 
     if (invnrs is not None or kantoor_filter is not None) and not matched_any:
         print(
@@ -417,7 +423,8 @@ def main(
             print(f"Wrote {len(csv_rows)} rows to {csv_out}\n")
         return
 
-    print("\nDone (Overijssel).")
+    summary.report()
+    return summary
 
 
 if __name__ == "__main__":

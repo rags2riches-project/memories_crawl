@@ -25,6 +25,7 @@ from pathlib import Path
 import requests
 
 from memories_crawl import filters, paths, regcache
+from memories_crawl.summary import PageTally, RunSummary
 
 ACCESS_NUMBER = "3.06.05"
 EAD_XML_URL = "https://www.nationaalarchief.nl/onderzoeken/archief/3.06.05/download/xml"
@@ -314,7 +315,7 @@ def main(
     csv_out: str | None = None,
     out_dir: Path | None = None,
     refresh_cache: bool = False,
-) -> None:
+) -> RunSummary | None:
     if out_dir is not None:
         paths.set_out_dir(out_dir)
     output_dir = paths.archive_dir(ARCHIVE)
@@ -338,6 +339,9 @@ def main(
     if list_invnrs:
         _list_inventory(inv_numbers, csv_out=csv_out)
         return
+
+    # Access 3.06.05 is a flat run of inventarisnummers: no kantoor layer.
+    summary = RunSummary(ARCHIVE, "Zuid-Holland (Nationaal Archief)", unit_name=None)
 
     done_file = paths.cache_file(
         ARCHIVE, "nationaalarchief_done.txt", legacy=Path("nationaalarchief_done.txt")
@@ -374,7 +378,12 @@ def main(
             continue
 
         _write_metadata(dest_dir, invnr, html, scans)
+        # The viewer page lists every scan, so the size of this register is
+        # known before the first image is fetched.
+        print(f"{len(scans)} scans …", end=" ", flush=True)
+        summary.registers += 1
 
+        tally = PageTally()
         for scan in scans:
             label = scan.get("label") or f"{invnr}_{scan.get('order', 0):04d}.jpg"
             default = scan.get("default") or {}
@@ -386,14 +395,16 @@ def main(
             if not download_url:
                 continue
             dest = dest_dir / label
-            _download_file(session, download_url, dest)
+            tally.record(_download_file(session, download_url, dest), dest)
 
-        print(f"{len(scans)} scans")
+        print(tally.describe(len(scans)))
+        summary.pages += tally
         with open(done_file, "a") as f:
             f.write(key + "\n")
         time.sleep(1.0)
 
-    print("Done.")
+    summary.report()
+    return summary
 
 
 if __name__ == "__main__":

@@ -45,6 +45,7 @@ from pathlib import Path
 import requests
 
 from memories_crawl import filters, paths, regcache
+from memories_crawl.summary import PageTally, RunSummary
 
 API_BASE = "https://webservices.memorix.nl/genealogy"
 API_KEY = "a85387a2-fdb2-44d0-8209-3635e59c537e"
@@ -273,7 +274,7 @@ def main(
     out_dir: Path | None = None,
     kantoren: set[str] | None = None,
     refresh_cache: bool = False,
-) -> None:
+) -> RunSummary | None:
     kantoor_filter = filters.normalize(kantoren)
 
     if out_dir is not None:
@@ -316,6 +317,10 @@ def main(
         _list_registers(registers, csv_out=csv_out)
         return
 
+    # Registers are grouped by gemeente here; the archive has no kantoor layer.
+    summary = RunSummary(ARCHIVE, "Drenthe", unit_name="gemeenten")
+    gemeenten_seen: set[str] = set()
+
     done = _load_done()
     progress_csv = _progress_csv()
     write_header = not progress_csv.exists() or progress_csv.stat().st_size == 0
@@ -335,12 +340,20 @@ def main(
             deeds = _paginate(session, "/deed", f"register_id:{reg_id}", "deed")
             persons = _paginate(session, "/person", f"register_id:{reg_id}", "person")
             persons_by_deed = {p.get("deed_id"): p for p in persons if p.get("deed_id")}
+            # Deed search results embed their assets, so the register's scan
+            # count is known before a single image is fetched.
+            n_assets = sum(len(d.get("asset") or []) for d in deeds)
             print(
-                f"[{idx}/{len(registers)}] {gemeente} inv {invnr or '?'} – {len(deeds)} deeds …",
+                f"[{idx}/{len(registers)}] {gemeente} inv {invnr or '?'} – "
+                f"{len(deeds)} deeds, {n_assets} scans …",
                 flush=True,
             )
+            gemeenten_seen.add(gemeente)
+            summary.units = len(gemeenten_seen)
+            summary.registers += 1
+            summary.records += len(deeds)
 
-            n_scans = 0
+            register_tally = PageTally()
             for deed in deeds:
                 deed_id = deed.get("id") or ""
                 if not deed_id or deed_id in done:
@@ -357,25 +370,29 @@ def main(
                 dest_dir = output_dir / deed_id
                 _write_metadata(dest_dir, deed, persons_by_deed.get(deed_id, {}), reg)
 
-                n_done = 0
+                tally = PageTally()
                 for asset_idx, asset in enumerate(assets, start=1):
                     download_url = asset.get("download") or asset.get("thumb.large") or ""
                     if not download_url:
                         continue
                     dest = dest_dir / f"{asset_idx:04d}.jpg"
-                    if _download_file(session, download_url, dest) in ("downloaded", "exists"):
-                        n_done += 1
+                    tally.record(_download_file(session, download_url, dest), dest)
 
+                n_done = tally.downloaded + tally.skipped
                 writer.writerow(
                     {"deed_id": deed_id, "invnr": invnr, "status": "done", "n_scans": n_done}
                 )
                 progress.flush()
-                n_scans += n_done
+                # Fold in per deed, not per register, so a run that dies midway
+                # still reports everything it downloaded.
+                register_tally += tally
+                summary.pages += tally
 
-            print(f"      ✓ {n_scans} scans", flush=True)
+            print(f"      ✓ {register_tally.describe()}", flush=True)
             time.sleep(REQUEST_SLEEP)
 
-    print("Drents Archief pipeline finished.")
+    summary.report()
+    return summary
 
 
 if __name__ == "__main__":

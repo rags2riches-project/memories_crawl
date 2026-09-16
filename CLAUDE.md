@@ -38,6 +38,40 @@ an upgrade never silently repeats a token harvest.
 Every pipeline's `main()` takes `out_dir: Path | None = None` and calls
 `paths.set_out_dir(out_dir)` when it is given; the CLI sets it once up front.
 
+## Run reporting (issue #19)
+
+`src/memories_crawl/summary.py` holds the counting. Every pipeline's `main()`
+returns a `RunSummary | None` (`None` only for a `--list-invnrs` pass, which
+downloads nothing).
+
+* `PageTally` folds one download outcome at a time via
+  `tally.record(status, dest)`, where `status` is what `_download_file`
+  returns (`downloaded` / `exists` / `missing` / `failed`). It is a plain value
+  object with `+=`, so a concurrent download loop (issue #26) can keep a tally
+  per thread and merge at the join — never mutate module-level counters.
+  Bytes come from `dest.stat().st_size` of pages this run actually fetched;
+  never multiply a page count by an assumed average (36× spread between
+  archives).
+* `tally.describe(n_pages)` renders the per-register progress line
+  (`38 pages (38 new, 0 existing, 0 missing, 21.7 MB)`).
+* `announce(pages, registers, where)` prints the up-front
+  `→ about to download N pages across M registers in …` line. Call it only
+  where the page list is genuinely known in advance — the MAIS pipelines know
+  it after the token harvest; Limburg counts its token caches first.
+* `RunSummary` carries `units` (kantoren, gemeenten or archive codes;
+  `unit_name=None` for the Nationaal Archief, which has no such layer),
+  `registers`, optional `records` (deeds/persons, where the archive indexes
+  them), and the `pages` tally. `summary.report()` prints the end-of-run block;
+  each pipeline calls it at the point where it used to print `Done (X).`.
+* Fold each register's tally into the summary **as that register finishes**,
+  not once per kantoor, so a crash midway keeps the partial totals.
+* `RunSummary` registers itself with the collector `cli.py` installs around
+  each pipeline call (`summary.collect()`), which is how the CLI can print a
+  partial summary for a pipeline that raised and still include it in the
+  `all` grand total (`summary.grand_total`). The CLI prints a summary only if
+  the pipeline did not already report it, and prints none at all for
+  `--list-invnrs`.
+
 ## Archive-level inventory listing (issue #25)
 
 The four API-backed pipelines have to know which registers exist before they
@@ -86,6 +120,8 @@ side over the cached list.
 |---|---|
 | `src/memories_crawl/cli.py` | CLI dispatcher |
 | `src/memories_crawl/paths.py` | Output root, per-archive scan dirs and cache paths |
+| `src/memories_crawl/summary.py` | Download counters, per-archive summary, cross-archive total |
+
 | `src/memories_crawl/regcache.py` | TTL cache for the archive-level inventory listing |
 | `src/memories_crawl/filters.py` | Case-insensitive name/code matching for `--kantoor` |
 | `src/memories_crawl/nationaalarchief.py` | Zuid-Holland: scrape viewer pages, download via UUID |

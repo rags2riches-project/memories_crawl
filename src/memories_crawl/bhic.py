@@ -42,6 +42,7 @@ from pathlib import Path
 import requests
 
 from memories_crawl import filters, paths, regcache
+from memories_crawl.summary import PageTally, RunSummary
 
 API_BASE = "https://webservices.memorix.nl/genealogy"
 API_KEY = "24c66d08-da4a-4d60-917f-5942681dcaa1"
@@ -330,7 +331,7 @@ def main(
     out_dir: Path | None = None,
     kantoren: set[str] | None = None,
     refresh_cache: bool = False,
-) -> None:
+) -> RunSummary | None:
     kantoor_filter = filters.normalize(kantoren)
 
     if out_dir is not None:
@@ -366,6 +367,10 @@ def main(
     if list_invnrs:
         _list_registers(registers, csv_out=csv_out)
         return
+
+    # Registers are grouped by gemeente here; the archive has no kantoor layer.
+    summary = RunSummary(ARCHIVE, "Noord-Brabant (BHIC)", unit_name="gemeenten")
+    gemeenten_seen: set[str] = set()
 
     done = _load_done()
     progress_csv = _progress_csv()
@@ -405,10 +410,12 @@ def main(
             _write_register_metadata(dest_dir, reg)
 
             # Pull all deeds + persons for the genealogical sidecar.
+            deeds: list[dict] = []
             try:
                 deeds = _paginate(session, "/deed", f"register_id:{reg_id}", "deed")
                 persons = _paginate(session, "/person", f"register_id:{reg_id}", "person")
                 _write_deeds_sidecar(dest_dir, deeds, persons)
+                summary.records += len(deeds)
             except Exception as exc:
                 print(f"      WARN: deeds/persons fetch failed: {exc}", flush=True)
 
@@ -429,7 +436,9 @@ def main(
                 progress.flush()
                 continue
 
-            n_done = 0
+            print(f"      {len(deeds)} memories, {len(assets)} scans …", flush=True)
+
+            tally = PageTally()
             for asset in assets:
                 # Prefer the explicit asset-search "download" URL; fall back to
                 # building one from the file_id if missing.
@@ -440,10 +449,9 @@ def main(
                 if not url:
                     continue
                 dest = dest_dir / _asset_filename(asset)
-                status = _download_file(session, url, dest)
-                if status in ("downloaded", "exists"):
-                    n_done += 1
+                tally.record(_download_file(session, url, dest), dest)
 
+            n_done = tally.downloaded + tally.skipped
             writer.writerow(
                 {
                     "register_id": reg_id,
@@ -454,10 +462,16 @@ def main(
                 }
             )
             progress.flush()
-            print(f"      ✓ {n_done} scans", flush=True)
+            print(f"      ✓ {tally.describe(len(assets))}", flush=True)
+
+            gemeenten_seen.add(gemeente)
+            summary.units = len(gemeenten_seen)
+            summary.registers += 1
+            summary.pages += tally
             time.sleep(REQUEST_SLEEP)
 
-    print("BHIC pipeline finished.")
+    summary.report()
+    return summary
 
 
 if __name__ == "__main__":

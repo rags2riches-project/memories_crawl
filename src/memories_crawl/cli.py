@@ -25,6 +25,7 @@ import sys
 from pathlib import Path
 
 from memories_crawl import paths
+from memories_crawl.summary import RunSummary, collect, grand_total
 
 
 def _run_friesland(
@@ -34,11 +35,11 @@ def _run_friesland(
     out_dir: Path | None = None,
     kantoren: set[str] | None = None,
     refresh_cache: bool = False,
-) -> None:
+) -> RunSummary | None:
     print("=== Friesland pipeline (Tresoar / AlleFriezen, Memorix API) ===")
     from memories_crawl.friesland import main as run
 
-    run(
+    return run(
         invnrs=invnrs,
         list_invnrs=list_invnrs,
         csv_out=csv_out,
@@ -55,7 +56,7 @@ def _run_nationaalarchief(
     out_dir: Path | None = None,
     kantoren: set[str] | None = None,
     refresh_cache: bool = False,
-) -> None:
+) -> RunSummary | None:
     print("=== Nationaal Archief pipeline (Zuid-Holland, access 3.06.05) ===")
     from memories_crawl.nationaalarchief import main as run
 
@@ -64,7 +65,7 @@ def _run_nationaalarchief(
     # the filter was applied.
     if kantoren:
         print("  NOTE: nationaalarchief has no kantoor subdivision; --kantoor is ignored.")
-    run(
+    return run(
         invnrs=invnrs,
         list_invnrs=list_invnrs,
         csv_out=csv_out,
@@ -80,11 +81,11 @@ def _run_drentsarchief(
     out_dir: Path | None = None,
     kantoren: set[str] | None = None,
     refresh_cache: bool = False,
-) -> None:
+) -> RunSummary | None:
     print("=== Drents Archief pipeline (Memorix API) ===")
     from memories_crawl.drentsarchief import main as run
 
-    run(
+    return run(
         invnrs=invnrs,
         list_invnrs=list_invnrs,
         csv_out=csv_out,
@@ -101,11 +102,11 @@ def _run_bhic(
     out_dir: Path | None = None,
     kantoren: set[str] | None = None,
     refresh_cache: bool = False,
-) -> None:
+) -> RunSummary | None:
     print("=== BHIC pipeline (Noord-Brabant, Memorix API) ===")
     from memories_crawl.bhic import main as run
 
-    run(
+    return run(
         invnrs=invnrs,
         list_invnrs=list_invnrs,
         csv_out=csv_out,
@@ -121,11 +122,11 @@ def _run_overijssel(
     csv_out: str | None = None,
     out_dir: Path | None = None,
     kantoren: set[str] | None = None,
-) -> None:
+) -> RunSummary | None:
     print("=== Overijssel pipeline (INCOMPLETE – see python/overijssel.py) ===")
     from memories_crawl.overijssel import main as run
 
-    run(
+    return run(
         invnrs=invnrs,
         list_invnrs=list_invnrs,
         csv_out=csv_out,
@@ -140,11 +141,11 @@ def _run_utrechtsarchief(
     csv_out: str | None = None,
     out_dir: Path | None = None,
     kantoren: set[str] | None = None,
-) -> None:
+) -> RunSummary | None:
     print("=== Utrechts Archief pipeline ===")
     from memories_crawl.utrechtsarchief import main as run
 
-    run(
+    return run(
         invnrs=invnrs,
         list_invnrs=list_invnrs,
         csv_out=csv_out,
@@ -159,11 +160,11 @@ def _run_limburg(
     csv_out: str | None = None,
     out_dir: Path | None = None,
     kantoren: set[str] | None = None,
-) -> None:
+) -> RunSummary | None:
     print("=== Limburg pipeline (RHCL, archieven.nl MAIS) ===")
     from memories_crawl.limburg import main as run
 
-    run(
+    return run(
         invnrs=invnrs,
         list_invnrs=list_invnrs,
         csv_out=csv_out,
@@ -178,11 +179,11 @@ def _run_noordholland(
     csv_out: str | None = None,
     out_dir: Path | None = None,
     kantoren: set[str] | None = None,
-) -> None:
+) -> RunSummary | None:
     print("=== Noord-Holland pipeline (Noord-Hollands Archief) ===")
     from memories_crawl.noordholland import main as run
 
-    run(
+    return run(
         invnrs=invnrs,
         list_invnrs=list_invnrs,
         csv_out=csv_out,
@@ -197,11 +198,11 @@ def _run_zeeland(
     csv_out: str | None = None,
     out_dir: Path | None = None,
     kantoren: set[str] | None = None,
-) -> None:
+) -> RunSummary | None:
     print("=== Zeeland pipeline (Zeeuws Archief) ===")
     from memories_crawl.zeeland import main as run
 
-    run(
+    return run(
         invnrs=invnrs,
         list_invnrs=list_invnrs,
         csv_out=csv_out,
@@ -216,11 +217,11 @@ def _run_gelderland(
     csv_out: str | None = None,
     out_dir: Path | None = None,
     kantoren: set[str] | None = None,
-) -> None:
+) -> RunSummary | None:
     print("=== Gelderland pipeline (Gelders Archief) ===")
     from memories_crawl.gelderland import main as run
 
-    run(
+    return run(
         invnrs=invnrs,
         list_invnrs=list_invnrs,
         csv_out=csv_out,
@@ -317,6 +318,7 @@ def main() -> None:
     invnr_filter: set[str] | None = set(args.invnrs) if args.invnrs else None
     kantoor_filter: set[str] | None = set(args.kantoren) if args.kantoren else None
     targets = list(PIPELINES) if args.pipeline == "all" else [args.pipeline]
+    summaries: list[RunSummary] = []
     for name in targets:
         csv_path: str | None = None
         if args.csv_out is not None:
@@ -330,12 +332,33 @@ def main() -> None:
         kwargs["kantoren"] = kantoor_filter
         if name in CACHED_LISTING_PIPELINES:
             kwargs["refresh_cache"] = args.refresh_cache
-        try:
-            PIPELINES[name](**kwargs)
-        except Exception as exc:
-            print(f"ERROR in {name}: {exc}", file=sys.stderr)
-            if args.pipeline != "all":
-                raise
+        failure: Exception | None = None
+        # collect() sees the pipeline's summary even if the call never returns,
+        # so a run that dies halfway still reports what it managed to download.
+        with collect() as collected:
+            try:
+                PIPELINES[name](**kwargs)
+            except Exception as exc:
+                failure = exc
+                print(f"ERROR in {name}: {exc}", file=sys.stderr)
+                for run in collected:
+                    run.error = str(exc)
+
+        if failure is not None and not collected:
+            # The pipeline died before it got as far as counting anything; the
+            # archive still belongs in the table, as a row that failed.
+            collected.append(RunSummary(name, error=str(failure)))
+
+        if not args.list_invnrs:
+            summaries.extend(collected)
+            for run in collected:
+                if not run.reported:  # a pipeline that finished reported itself
+                    run.report()
+        if failure is not None and args.pipeline != "all":
+            raise failure
+
+    if args.pipeline == "all" and summaries:
+        print(f"\n{grand_total(summaries)}")
 
 
 if __name__ == "__main__":
