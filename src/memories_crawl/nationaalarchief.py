@@ -24,7 +24,7 @@ from pathlib import Path
 
 import requests
 
-from memories_crawl import paths, regcache
+from memories_crawl import filters, paths, regcache
 
 ACCESS_NUMBER = "3.06.05"
 EAD_XML_URL = "https://www.nationaalarchief.nl/onderzoeken/archief/3.06.05/download/xml"
@@ -329,6 +329,11 @@ def main(
     if invnrs is not None:
         inv_numbers = [n for n in inv_numbers if str(n) in invnrs]
         print(f"Filtered to {len(inv_numbers)} inventory numbers matching --invnr.")
+        if not inv_numbers:
+            print(
+                f"\nWARNING: {filters.describe(invnrs)} matched no "
+                "inventarisnummer in access 3.06.05."
+            )
 
     if list_invnrs:
         _list_inventory(inv_numbers, csv_out=csv_out)

@@ -41,7 +41,7 @@ from pathlib import Path
 
 import requests
 
-from memories_crawl import paths, regcache
+from memories_crawl import filters, paths, regcache
 
 API_BASE = "https://webservices.memorix.nl/genealogy"
 API_KEY = "24c66d08-da4a-4d60-917f-5942681dcaa1"
@@ -328,8 +328,11 @@ def main(
     list_invnrs: bool = False,
     csv_out: str | None = None,
     out_dir: Path | None = None,
+    kantoren: set[str] | None = None,
     refresh_cache: bool = False,
 ) -> None:
+    kantoor_filter = filters.normalize(kantoren)
+
     if out_dir is not None:
         paths.set_out_dir(out_dir)
     paths.archive_dir(ARCHIVE).mkdir(parents=True, exist_ok=True)
@@ -338,8 +341,25 @@ def main(
 
     print("Collecting BHIC Memorie van Successie registers …")
     registers = _load_registers(session, invnrs=invnrs, refresh_cache=refresh_cache)
-    if invnrs is not None:
-        print(f"Filtered to {len(registers)} registers matching --invnr.")
+    if kantoor_filter is not None:
+        registers = [
+            r
+            for r in registers
+            if filters.matches(
+                kantoor_filter,
+                (r.get("metadata") or {}).get("gemeente") or "",
+                (r.get("metadata") or {}).get("code") or "",
+            )
+        ]
+    if invnrs is not None or kantoor_filter is not None:
+        print(
+            f"Filtered to {len(registers)} registers matching {filters.describe(invnrs, kantoren)}."
+        )
+        if not registers:
+            print(
+                f"\nWARNING: {filters.describe(invnrs, kantoren)} matched no "
+                "register in the BHIC collection."
+            )
     else:
         print(f"Found {len(registers)} registers.")
 

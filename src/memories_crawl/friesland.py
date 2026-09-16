@@ -38,7 +38,7 @@ from pathlib import Path
 
 import requests
 
-from memories_crawl import paths, regcache
+from memories_crawl import filters, paths, regcache
 
 API_BASE = "https://webservices.memorix.nl/genealogy"
 API_KEY = "aa030ec4-12d0-4dc0-afaf-b65fd6128b39"
@@ -288,8 +288,11 @@ def main(
     list_invnrs: bool = False,
     csv_out: str | None = None,
     out_dir: Path | None = None,
+    kantoren: set[str] | None = None,
     refresh_cache: bool = False,
 ) -> None:
+    kantoor_filter = filters.normalize(kantoren)
+
     if out_dir is not None:
         paths.set_out_dir(out_dir)
     output_dir = paths.archive_dir(ARCHIVE)
@@ -299,8 +302,19 @@ def main(
 
     print("Collecting Tresoar Memorie van Successie registers …")
     registers = _load_registers(session, invnrs=invnrs, refresh_cache=refresh_cache)
-    if invnrs is not None:
-        print(f"Filtered to {len(registers)} registers matching --invnr.")
+    if kantoor_filter is not None:
+        registers = [
+            r for r in registers if filters.matches(kantoor_filter, _kantoor_from_register(r))
+        ]
+    if invnrs is not None or kantoor_filter is not None:
+        print(
+            f"Filtered to {len(registers)} registers matching {filters.describe(invnrs, kantoren)}."
+        )
+        if not registers:
+            print(
+                f"\nWARNING: {filters.describe(invnrs, kantoren)} matched no "
+                "register in the Tresoar collection."
+            )
     else:
         print(f"Found {len(registers)} registers.")
 

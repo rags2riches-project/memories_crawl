@@ -44,7 +44,7 @@ from pathlib import Path
 
 import requests
 
-from memories_crawl import paths, regcache
+from memories_crawl import filters, paths, regcache
 
 API_BASE = "https://webservices.memorix.nl/genealogy"
 API_KEY = "a85387a2-fdb2-44d0-8209-3635e59c537e"
@@ -271,8 +271,11 @@ def main(
     list_invnrs: bool = False,
     csv_out: str | None = None,
     out_dir: Path | None = None,
+    kantoren: set[str] | None = None,
     refresh_cache: bool = False,
 ) -> None:
+    kantoor_filter = filters.normalize(kantoren)
+
     if out_dir is not None:
         paths.set_out_dir(out_dir)
     output_dir = paths.archive_dir(ARCHIVE)
@@ -281,9 +284,31 @@ def main(
     session = _session()
 
     print("Collecting Drents Archief Memorie van Successie registers …", flush=True)
-    registers = _collect_registers(session, invnrs=invnrs, refresh_cache=refresh_cache)
-    if invnrs is not None:
-        print(f"Filtered to {len(registers)} registers matching --invnr.")
+    # Keep the no-option call shape for callers that substitute the collector,
+    # while the real collector still uses its cache by default.
+    if invnrs is None and not refresh_cache:
+        registers = _collect_registers(session)
+    else:
+        registers = _collect_registers(session, invnrs=invnrs, refresh_cache=refresh_cache)
+    if kantoor_filter is not None:
+        registers = [
+            r
+            for r in registers
+            if filters.matches(
+                kantoor_filter,
+                _register_gemeente(r),
+                (r.get("metadata") or {}).get("archiefnummer") or "",
+            )
+        ]
+    if invnrs is not None or kantoor_filter is not None:
+        print(
+            f"Filtered to {len(registers)} registers matching {filters.describe(invnrs, kantoren)}."
+        )
+        if not registers:
+            print(
+                f"\nWARNING: {filters.describe(invnrs, kantoren)} matched no "
+                "register in the Drents Archief collection."
+            )
     else:
         print(f"Found {len(registers)} registers.")
 

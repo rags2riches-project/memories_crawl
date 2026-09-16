@@ -41,7 +41,7 @@ from pathlib import Path
 
 import requests
 
-from memories_crawl import paths
+from memories_crawl import filters, paths
 
 ARCHIVE_NAME = "Historisch Centrum Overijssel"
 ARCHIVE_NUMBER = "0136.4"
@@ -174,6 +174,25 @@ def _save_cached_tokens(minr: int, tokens: list[dict]) -> None:
         json.dump(tokens, f, ensure_ascii=False, indent=2)
 
 
+def _cached_kantoor_holds(minr: int, invnrs: set[str]) -> bool | None:
+    """Whether the kantoor's token cache covers any of ``invnrs``.
+
+    ``None`` when there is no cache: an absent cache is not evidence that the
+    kantoor lacks the invnr, so the caller must fall through to the harvest.
+    """
+    cache_path = _get_token_cache_path(minr)
+    if not cache_path.exists():
+        return None
+    try:
+        with open(cache_path, encoding="utf-8") as f:
+            tokens = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not tokens:
+        return None
+    return any(str(t.get("invnr")) in invnrs for t in tokens)
+
+
 def _fetch_page_tokens_via_playwright(minr: int) -> list[dict]:
     """Return [{invnr, page, miahd, rdt, open}, ...] for every scan page under minr.
 
@@ -303,7 +322,10 @@ def main(
     list_invnrs: bool = False,
     csv_out: str | None = None,
     out_dir: Path | None = None,
+    kantoren: set[str] | None = None,
 ) -> None:
+    kantoor_filter = filters.normalize(kantoren)
+
     if out_dir is not None:
         paths.set_out_dir(out_dir)
     output_dir = paths.archive_dir(ARCHIVE)
@@ -313,8 +335,17 @@ def main(
     session.headers["User-Agent"] = USER_AGENT
 
     csv_rows: list[dict] = []
+    matched_any = False
 
     for kantoor, minr in KANTOOR_MINR.items():
+        # Both filters are applied before the Playwright harvest: --kantoor by
+        # name or minr, --invnr through the kantoor's token cache where one
+        # exists (a missing cache proves nothing, so that kantoor is visited).
+        if not filters.matches(kantoor_filter, kantoor, minr):
+            continue
+        if invnrs is not None and _cached_kantoor_holds(minr, invnrs) is False:
+            continue
+
         print(f"\n  {kantoor} (minr={minr}): fetching page tokens via Playwright …")
         pages = _fetch_page_tokens_via_playwright(minr)
 
@@ -330,6 +361,9 @@ def main(
         # --invnr filter before download
         if invnrs is not None:
             invnr_pages = {invnr: ips for invnr, ips in invnr_pages.items() if str(invnr) in invnrs}
+
+        if invnr_pages:
+            matched_any = True
 
         # --list-invnrs: print and skip download for this kantoor
         if list_invnrs:
@@ -366,6 +400,12 @@ def main(
                 time.sleep(0.15)
 
         print(f"    {kantoor}: {downloaded} downloaded, {skipped} existing, {missing} missing")
+
+    if (invnrs is not None or kantoor_filter is not None) and not matched_any:
+        print(
+            f"\nWARNING: {filters.describe(invnrs, kantoren)} matched no "
+            f"inventarisnummer in any of the {len(KANTOOR_MINR)} kantoren."
+        )
 
     if list_invnrs:
         print()
