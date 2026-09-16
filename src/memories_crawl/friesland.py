@@ -38,14 +38,19 @@ from pathlib import Path
 
 import requests
 
-from memories_crawl import filters, paths
+from memories_crawl import filters, paths, regcache
 
 API_BASE = "https://webservices.memorix.nl/genealogy"
 API_KEY = "aa030ec4-12d0-4dc0-afaf-b65fd6128b39"
 REGISTER_FILTER = 'search_s_type_title:"Memories van successie"'
+#: Memorix indexes the inventarisnummer as an exact-match string field, so the
+#: ``--invnr`` filter can be pushed into the query instead of walking all
+#: twelve pages of the listing and discarding 1,106 of 1,107 registers (#25).
+INVNR_FIELD = "search_s_inventarisnummer"
 PAGE_SIZE = 100
 ARCHIVE = "friesland"
 PROGRESS_CSV_NAME = "friesland_progress.csv"
+REGISTER_CACHE_NAME = "registers.json"
 USER_AGENT = "memories-crawl/1.0"
 
 ARCHIVE_NAME = "Tresoar"
@@ -97,6 +102,46 @@ def _paginate(session: requests.Session, path: str, fq: str, key: str) -> list[d
         page += 1
         time.sleep(REQUEST_SLEEP)
     return items
+
+
+def _escape_fq(value: str) -> str:
+    """Quote-escape a user-supplied value for use inside an ``fq`` phrase."""
+    return value.replace("\\", "\\\\").replace('"', '\\"')
+
+
+def _register_fq(invnrs: set[str]) -> str:
+    """Return the register filter query narrowed to ``invnrs`` server-side.
+
+    Verified against the live API to select exactly the registers the old
+    client-side filter kept, including the one non-numeric number in the
+    Tresoar collection (``6004a``), and never a numeric prefix of another.
+    """
+    values = " OR ".join(f'"{_escape_fq(v)}"' for v in sorted(invnrs))
+    return f"{REGISTER_FILTER} AND {INVNR_FIELD}:({values})"
+
+
+def _load_registers(
+    session: requests.Session,
+    invnrs: set[str] | None = None,
+    refresh_cache: bool = False,
+) -> list[dict]:
+    """Return the MvS registers, narrowed to ``invnrs`` when one is given.
+
+    A ``--invnr`` run asks Memorix for just those registers, which is a single
+    request rather than a twelve-page walk.  An unfiltered run pays for the
+    walk once and caches it (see :mod:`memories_crawl.regcache`).
+    """
+    if invnrs is not None:
+        if not invnrs:
+            return []
+        return _paginate(session, "/register", _register_fq(invnrs), "register")
+    return regcache.load_or_collect(
+        ARCHIVE,
+        REGISTER_CACHE_NAME,
+        lambda: _paginate(session, "/register", REGISTER_FILTER, "register"),
+        key=REGISTER_FILTER,
+        refresh=refresh_cache,
+    )
 
 
 _SANITIZE_RE = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
@@ -244,6 +289,7 @@ def main(
     csv_out: str | None = None,
     out_dir: Path | None = None,
     kantoren: set[str] | None = None,
+    refresh_cache: bool = False,
 ) -> None:
     kantoor_filter = filters.normalize(kantoren)
 
@@ -255,19 +301,10 @@ def main(
     output_dir.mkdir(parents=True, exist_ok=True)
 
     print("Collecting Tresoar Memorie van Successie registers …")
-    registers = _paginate(session, "/register", REGISTER_FILTER, "register")
-    print(f"Found {len(registers)} registers.")
-
-    # Both filters are resolved from the register listing, which is the only
-    # request made so far -- nothing per-register is fetched for a register
-    # that the filters drop.
+    registers = _load_registers(session, invnrs=invnrs, refresh_cache=refresh_cache)
     if kantoor_filter is not None:
         registers = [
             r for r in registers if filters.matches(kantoor_filter, _kantoor_from_register(r))
-        ]
-    if invnrs is not None:
-        registers = [
-            r for r in registers if (r.get("metadata") or {}).get("inventarisnummer", "") in invnrs
         ]
     if invnrs is not None or kantoor_filter is not None:
         print(
@@ -278,6 +315,8 @@ def main(
                 f"\nWARNING: {filters.describe(invnrs, kantoren)} matched no "
                 "register in the Tresoar collection."
             )
+    else:
+        print(f"Found {len(registers)} registers.")
 
     if list_invnrs:
         _list_registers(registers, csv_out=csv_out)

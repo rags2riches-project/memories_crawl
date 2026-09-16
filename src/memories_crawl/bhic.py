@@ -41,14 +41,19 @@ from pathlib import Path
 
 import requests
 
-from memories_crawl import filters, paths
+from memories_crawl import filters, paths, regcache
 
 API_BASE = "https://webservices.memorix.nl/genealogy"
 API_KEY = "24c66d08-da4a-4d60-917f-5942681dcaa1"
 REGISTER_FILTER = 'search_s_type_title:"memorie van successie"'
+#: Memorix indexes the inventarisnummer as an exact-match string field, so the
+#: ``--invnr`` filter can be pushed into the query instead of walking the whole
+#: listing and discarding 1,890 of 1,896 registers (issue #25).
+INVNR_FIELD = "search_s_inventarisnummer"
 PAGE_SIZE = 100
 ARCHIVE = "bhic"
 PROGRESS_CSV_NAME = "bhic_progress.csv"
+REGISTER_CACHE_NAME = "registers.json"
 USER_AGENT = "memories-crawl/1.0"
 
 ARCHIVE_NAME = "Brabants Historisch Informatie Centrum"
@@ -101,6 +106,47 @@ def _paginate(session: requests.Session, path: str, fq: str, key: str) -> list[d
         page += 1
         time.sleep(REQUEST_SLEEP)
     return items
+
+
+def _escape_fq(value: str) -> str:
+    """Quote-escape a user-supplied value for use inside an ``fq`` phrase."""
+    return value.replace("\\", "\\\\").replace('"', '\\"')
+
+
+def _register_fq(invnrs: set[str]) -> str:
+    """Return the register filter query narrowed to ``invnrs`` server-side.
+
+    Verified against the live API to select exactly the registers the old
+    client-side filter kept, including non-numeric numbers such as
+    ``1903-1906``, and never a numeric prefix of another (``1`` does not match
+    ``12``).
+    """
+    values = " OR ".join(f'"{_escape_fq(v)}"' for v in sorted(invnrs))
+    return f"{REGISTER_FILTER} AND {INVNR_FIELD}:({values})"
+
+
+def _load_registers(
+    session: requests.Session,
+    invnrs: set[str] | None = None,
+    refresh_cache: bool = False,
+) -> list[dict]:
+    """Return the MvS registers, narrowed to ``invnrs`` when one is given.
+
+    A ``--invnr`` run asks Memorix for just those registers, which is a single
+    request rather than the nineteen-page walk.  An unfiltered run pays for the
+    walk once and caches it (see :mod:`memories_crawl.regcache`).
+    """
+    if invnrs is not None:
+        if not invnrs:
+            return []
+        return _paginate(session, "/register", _register_fq(invnrs), "register")
+    return regcache.load_or_collect(
+        ARCHIVE,
+        REGISTER_CACHE_NAME,
+        lambda: _paginate(session, "/register", REGISTER_FILTER, "register"),
+        key=REGISTER_FILTER,
+        refresh=refresh_cache,
+    )
 
 
 def _is_tafel(register: dict) -> bool:
@@ -283,6 +329,7 @@ def main(
     csv_out: str | None = None,
     out_dir: Path | None = None,
     kantoren: set[str] | None = None,
+    refresh_cache: bool = False,
 ) -> None:
     kantoor_filter = filters.normalize(kantoren)
 
@@ -293,13 +340,7 @@ def main(
     session = _session()
 
     print("Collecting BHIC Memorie van Successie registers …")
-    registers = _paginate(session, "/register", REGISTER_FILTER, "register")
-    print(f"Found {len(registers)} registers.")
-
-    # Both filters are resolved from the register listing, which is the only
-    # request made so far -- no deeds, persons or assets are fetched for a
-    # register that the filters drop.  BHIC's kantoor is the gemeente column of
-    # --list-invnrs; the archief-code (036.03.07, …) is accepted as well.
+    registers = _load_registers(session, invnrs=invnrs, refresh_cache=refresh_cache)
     if kantoor_filter is not None:
         registers = [
             r
@@ -310,10 +351,6 @@ def main(
                 (r.get("metadata") or {}).get("code") or "",
             )
         ]
-    if invnrs is not None:
-        registers = [
-            r for r in registers if (r.get("metadata") or {}).get("inventarisnummer", "") in invnrs
-        ]
     if invnrs is not None or kantoor_filter is not None:
         print(
             f"Filtered to {len(registers)} registers matching {filters.describe(invnrs, kantoren)}."
@@ -323,6 +360,8 @@ def main(
                 f"\nWARNING: {filters.describe(invnrs, kantoren)} matched no "
                 "register in the BHIC collection."
             )
+    else:
+        print(f"Found {len(registers)} registers.")
 
     if list_invnrs:
         _list_registers(registers, csv_out=csv_out)

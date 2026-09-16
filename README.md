@@ -181,6 +181,29 @@ caches its inventory (Gelderland, Limburg) or a kantoor's complete token harvest
 skipped before any network work. A *missing* cache is never treated as evidence — that
 kantoor is still searched.
 
+For Drenthe, BHIC and Friesland it is applied earlier still — in the API query
+itself — so a `--invnr` run makes one targeted request instead of walking the
+whole register listing. On BHIC that is ~18 ms rather than ~5.2 s.
+
+### `--refresh-cache` — re-read the inventory listing
+
+The API-backed archives (Friesland, Nationaal Archief, Drenthe, BHIC) cache their
+archive-level inventory listing under `<out-dir>/.cache/{archive}/` for 30 days, so
+running the CLI many times in a row — a sampler fetching one register per
+invocation, say — does not re-enumerate the archive each time. These archives
+re-catalogue on the order of years, so the cached listing is effectively always
+current; `--refresh-cache` re-collects it anyway:
+
+```bash
+uv run memories-crawl bhic --refresh-cache --list-invnrs
+```
+
+A cache that is unreadable, expired, or written for a different query is discarded
+and re-collected rather than trusted, and an empty listing is never written — a
+transient API failure cannot leave you with an archive that looks empty. The flag
+has no effect on the Playwright archives, which keep their own inventory and token
+caches.
+
 ### `--out-dir` — choose where everything lands
 
 By default scans and caches are written below `./scans`, relative to the directory
@@ -453,6 +476,8 @@ Scans go below the output root (`./scans` unless `--out-dir` says otherwise):
 │   ├── metadata.json
 │   └── 0000.jpg …
 └── .cache/{archive}/
+    ├── registers.json            – archive-level register listing (30-day TTL)
+    ├── inventory.json            – same, for the Nationaal Archief's EAD invnrs
     ├── inventory_{code}.json     – discovered inventarisnummers
     ├── tokens_*.json             – harvested Playwright tokens
     ├── done.txt                  – resume markers
@@ -491,11 +516,11 @@ Fields vary by archive depending on what metadata is available in the source sys
 
 All pipelines are designed to be safely restarted:
 
-- **Friesland**: tracks completed registers in `<out-dir>/.cache/friesland/friesland_progress.csv` (rows with `status=done` are skipped); existing per-person directories (with `metadata.json`) are skipped on reruns.
+- **Friesland**: tracks completed registers in `<out-dir>/.cache/friesland/friesland_progress.csv` (rows with `status=done` are skipped); existing per-person directories (with `metadata.json`) are skipped on reruns. The register listing is cached in `registers.json` for 30 days (`--refresh-cache` re-collects it).
 - **Gelderland**: inventory and token cache files (`inventory_{code}.json`, `tokens_{code}.json` with partial saves every 25 invnrs) skip the slow Playwright pass; already-downloaded images are skipped by file existence check. Completed kantoren are tracked in `<out-dir>/.cache/gelderland/done.txt`.
-- **Nationaal Archief**: tracks completed inventory numbers in `<out-dir>/.cache/nationaalarchief/nationaalarchief_done.txt`.
-- **Drents Archief**: tracks completed deeds in `<out-dir>/.cache/drentsarchief/drentsarchief_deeds.csv` (rows with `status=done` are skipped), written after every deed so an interrupted run keeps its progress; scans are downloaded to a `.part` file and renamed on completion, so a truncated file is never mistaken for a finished one.
-- **BHIC**: tracks completed registers in `<out-dir>/.cache/bhic/bhic_progress.csv` (rows with `status=done` are skipped); already-downloaded scans are skipped by file existence check.
+- **Nationaal Archief**: tracks completed inventory numbers in `<out-dir>/.cache/nationaalarchief/nationaalarchief_done.txt`. The invnrs parsed from the EAD XML are cached in `inventory.json` for 30 days (`--refresh-cache` re-collects them); the hardcoded fallback list is never cached.
+- **Drents Archief**: tracks completed deeds in `<out-dir>/.cache/drentsarchief/drentsarchief_deeds.csv` (rows with `status=done` are skipped), written after every deed so an interrupted run keeps its progress; scans are downloaded to a `.part` file and renamed on completion, so a truncated file is never mistaken for a finished one. The register listing is cached in `registers.json` for 30 days (`--refresh-cache` re-collects it).
+- **BHIC**: tracks completed registers in `<out-dir>/.cache/bhic/bhic_progress.csv` (rows with `status=done` are skipped); already-downloaded scans are skipped by file existence check. The 19-page register listing is cached in `registers.json` for 30 days (`--refresh-cache` re-collects it).
 - **Overijssel**: token cache files (`tokens_minr_*.json`) skip the slow Playwright pass; already-downloaded images are skipped by file existence check.
 - **Limburg**: inventory and token cache files (`inventory_{code}.json`, `tokens_{code}_{invnr}.json`) skip the slow Playwright pass; already-downloaded images are skipped by file existence check.
 - **Utrechts Archief**: token cache files (`tokens_{micode}_{minr}.json`, with partial saves every 25 items for crash resilience) skip the slow Playwright pass; already-downloaded images are skipped by file existence check. Completed inventarisnummers are tracked in `done_{kantoor}.txt` per kantoor.
