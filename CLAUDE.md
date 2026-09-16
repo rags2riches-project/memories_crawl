@@ -85,7 +85,7 @@ Each pipeline was live-tested against the real APIs and servers.
 |---|---|---|---|
 | **friesland** | ✅ | ⚠️ not yet tested | Tresoar / AlleFriezen Memorix REST API. 1,107 registers, ~238k persons. Deed-level assets with .jp2 downloads. Person→deed join via deed_id. Output: scans/friesland/{kantoor}/{invnr}/{person}/. |
 | **nationaalarchief** | ✅ | ✅ | 70 scans downloaded from invnr 2276 in 60s (174 MB). EAD XML parses correctly, drupal-settings-json extraction works, `service.archief.nl` download works. |
-| **drentsarchief** | ✅ | ⚠️ slow start | API returns ~106k deeds. Pipeline must paginate ~1064 pages to collect all deed IDs **before** any download begins (~5 min). Once collection finishes, downloads work (8.3 MB/scan tested). |
+| **drentsarchief** | ✅ | ✅ verified | Register-driven: one `/register` request (557 registers) resolves the whole inventory, then deeds/persons are paged per register. `--list-invnrs` runs in ~1 s; `--invnr` touches only matching registers. Smoke-tested 2026-09-16: Coevorden invnr 1 → 176 deeds, ~6 MB/scan. |
 | **overijssel** | ✅ | ⚠️ slow first run | Playwright + Chromium work. Almelo has 256 stk3 items → ~1825 pages of tokens; collecting tokens takes ~6 min per kantoor. Token results are cached in `scans/overijssel/tokens_minr_{minr}.json` — reruns skip Playwright entirely. |
 | **utrechtsarchief** | ✅ | ⚠️ slow first run | Playwright + Chromium. Uses stk3 inline toggle (same approach as Overijssel). Amersfoort verified: 66,615 pages from 211 invnrs across 2 subsections (~12 min harvest). Token results cached per subsection — reruns skip Playwright. 11 kantoren configured. |
 | **limburg** | ✅ | ✅ verified | archieven.nl MAIS (miadt=38, mivast=0). Two codes: 07.D03 (1818-1900, 111 digitized of 1,314, ~104k scans, by place) and 07.D08 (1901-1927, 42 digitized of 460, ~7k scans, by kantoor). End-to-end smoke-tested: invnr 1 (Amby) → 527 pages; invnr 491 (Gennep) → 207 pages. Inventory + tokens cached per code/invnr; reruns skip Playwright. Image format is `format=large` PNG (714×1024); see module docstring for trade-off vs. IIPSrv full-res JP2 path. |
@@ -108,10 +108,23 @@ Scans are in a `<script data-drupal-selector="drupal-settings-json">` JSON blob.
 ```
 Base: https://webservices.memorix.nl/genealogy
 Key:  a85387a2-fdb2-44d0-8209-3635e59c537e
-Person search: GET /person?q=*:*&fq=search_s_deed_type_title:"Successiememories"&rows=100&page=N
-Deed detail:   GET /deed/{deed_id}
+Register list: GET /register?q=*:*&fq=search_s_brontype:"Memorie van Successie"&rows=1000
+Deeds:         GET /deed?fq=register_id:{register_id}&rows=1000&page=N
+Persons:       GET /person?fq=register_id:{register_id}&rows=1000&page=N
 Full image:    asset[].download  (e.g. https://images.memorix.nl/dre/download/fullsize/{uuid}.jpg)
 ```
+
+557 registers, ~106,378 deeds (1 person per deed). Scans hang off the **deed**,
+not the register — unlike BHIC. Register metadata is the only place that carries
+`inventarisnummer` / `gemeente`: deed documents have no `register` key and no
+`inventarisnummer` field, so the inventory must come from `/register`. Kantoren
+are Assen, Coevorden, Emmen, Hoogeveen, Meppel across archiefnummers 0119.01,
+.03, .05, .07, .08, .10; the same invnr can recur under different archiefnummers,
+so `--invnr N` may select several registers.
+
+`rows=1000` is accepted on all three endpoints, so the full register listing is a
+single request. Do **not** re-introduce the old person-index walk
+(`/person?q=*:*` over ~1,064 pages) — see issue #28.
 
 ### BHIC (Noord-Brabant) API
 

@@ -103,9 +103,12 @@ reference:
       - drentsarchief.API_KEY
       - drentsarchief.ARCHIVE_NAME
       - drentsarchief.ARCHIVE_NUMBER
-      - drentsarchief.DEED_TYPE_FILTER
       - drentsarchief.OUTPUT_DIR
       - drentsarchief.PAGE_SIZE
+      - drentsarchief.PROGRESS_CSV
+      - drentsarchief.RATE_LIMIT_SLEEP
+      - drentsarchief.REGISTER_FILTER
+      - drentsarchief.REQUEST_SLEEP
       - drentsarchief.USER_AGENT
       - friesland.API_BASE
       - friesland.API_KEY
