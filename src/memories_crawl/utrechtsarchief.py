@@ -436,18 +436,14 @@ def _session() -> requests.Session:
 
 
 def _download_file(session: requests.Session, url: str, dest: Path) -> str:
-    if dest.exists() and dest.stat().st_size > 0:
-        return "exists"
-    resp = session.get(url, stream=True, timeout=120)
-    if resp.status_code in (404, 202):
-        return "missing"
-    resp.raise_for_status()
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    with open(dest, "wb") as f:
-        for chunk in resp.iter_content(65536):
-            if chunk:
-                f.write(chunk)
-    return "downloaded"
+    """Fetch one scan; see :func:`download.fetch_file` for the retry rules."""
+    return download.fetch_file(
+        session,
+        url,
+        dest,
+        missing_statuses=(404, 202),
+        timeout=120,
+    )
 
 
 def _write_metadata(

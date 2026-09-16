@@ -285,3 +285,115 @@ class Downloader:
 
     def __exit__(self, *exc_info: object) -> None:
         self.close()
+
+
+#: HTTP statuses that earn another attempt rather than a failure.  A 429 has
+#: usually already paused every worker via :meth:`RateLimiter.penalize` by the
+#: time it gets here; the extra wait below is small and on the polite side.
+RETRY_STATUSES = frozenset({429, 500, 502, 503, 504})
+
+#: Attempts per image, and the first pause between them (doubled after each).
+DEFAULT_RETRIES = 3
+DEFAULT_BACKOFF = 5.0
+
+
+def _discard(path: Path) -> None:
+    """Remove a part-file, ignoring the case where it was never created."""
+    try:
+        path.unlink(missing_ok=True)
+    except OSError:  # pragma: no cover - a failed cleanup is not worth raising
+        pass
+
+
+def fetch_file(
+    session: requests.Session,
+    url: str,
+    dest: Path,
+    *,
+    missing_statuses: Iterable[int] = (404,),
+    retries: int = DEFAULT_RETRIES,
+    backoff: float = DEFAULT_BACKOFF,
+    timeout: float = 120,
+    allow_redirects: bool | None = None,
+    sleep: Callable[[float], None] | None = None,
+) -> str:
+    """Fetch one image to ``dest``, retrying what is worth retrying.
+
+    Returns the usual status string: ``exists`` when the file is already there,
+    ``missing`` for a status in ``missing_statuses`` (the archive has no such
+    page), ``downloaded`` on success, ``failed`` when the attempts ran out or
+    the server refused permanently.
+
+    This replaces nine near-identical ``_download_file`` helpers that between
+    them had three separate defects:
+
+    * **Transient errors killed the whole register.**  Five pipelines had no
+      retry at all, so ``raise_for_status`` or a ``ConnectionError`` propagated
+      out of :meth:`Downloader.run` and ended the run -- one momentary DNS
+      failure or connection reset forfeited every remaining page.  Here an
+      exhausted retry is a ``failed`` page, counted in the summary, and the run
+      carries on.
+    * **A broken body escaped the retry.**  Even the three pipelines that did
+      retry only wrapped ``session.get``; the streaming read that follows sat
+      outside the ``try``, so a ``ChunkedEncodingError`` mid-image -- by far the
+      most common way one of these transfers dies -- was never retried.  The
+      read is inside the loop here.
+    * **A part-written image looked complete.**  Six pipelines streamed
+      straight into ``dest``, so an interrupted transfer left a truncated JPEG
+      that the ``dest.exists()`` check at the top then skipped forever: the
+      corruption survived every later resume.  Writing to ``.part`` and
+      renaming means a file at ``dest`` is always whole.
+
+    A permanently refused status (anything >= 400 that is neither "missing" nor
+    retryable -- an expired MAIS token, say) fails immediately; repeating it
+    would only be rude.
+    """
+    if dest.exists() and dest.stat().st_size > 0:
+        return "exists"
+
+    # Looked up late, like RateLimiter._do_sleep: binding time.sleep as a
+    # default would capture it at import and leave a test that patches
+    # time.sleep waiting out the real backoff.
+    pause = sleep if sleep is not None else (lambda seconds: time.sleep(seconds))
+    missing = frozenset(missing_statuses)
+    tmp = dest.with_suffix(dest.suffix + ".part")
+    kwargs: dict[str, Any] = {"stream": True, "timeout": timeout}
+    if allow_redirects is not None:
+        kwargs["allow_redirects"] = allow_redirects
+
+    attempts = max(1, retries)
+    delay = backoff
+    for attempt in range(attempts):
+        last = attempt >= attempts - 1
+        try:
+            resp = session.get(url, **kwargs)
+            if resp.status_code in missing:
+                return "missing"
+            if resp.status_code in RETRY_STATUSES:
+                if last:
+                    print(f"      {resp.status_code} after {attempt + 1} attempts", flush=True)
+                    return "failed"
+                pause(delay)
+                delay *= 2
+                continue
+            if resp.status_code >= 400:
+                print(f"      {resp.status_code} for {url}", flush=True)
+                return "failed"
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            with open(tmp, "wb") as fh:
+                for chunk in resp.iter_content(65536):
+                    if chunk:
+                        fh.write(chunk)
+            tmp.rename(dest)
+            return "downloaded"
+        except requests.RequestException as exc:
+            # Covers the connection resets, DNS failures, timeouts and broken
+            # chunked bodies that all used to end the run.
+            _discard(tmp)
+            if last:
+                print(f"      network error ({exc}); giving up on this page", flush=True)
+                return "failed"
+            print(f"      network error ({exc}); retry in {delay:g}s", flush=True)
+            pause(delay)
+            delay *= 2
+    return "failed"

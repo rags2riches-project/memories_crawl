@@ -312,6 +312,16 @@ a rebuff seen by one worker pauses all of them. Raising the worker count raises 
 load you put on the server; stay well below what it can take, and drop to
 `--workers 1` if you see 429s or timeouts.
 
+**Transient failures cost a page, not a register.** Every image goes through
+`download.fetch_file`, which retries three times with a doubling pause on the
+errors that are worth retrying — connection resets, DNS failures, timeouts, a
+body that breaks mid-transfer, and 429/5xx — and then records the page as
+`failed` and moves on. A permanently refused status (an expired MAIS token, say)
+fails at once rather than being repeated. Images stream to a `.part` file and are
+renamed on completion, so an interrupted transfer never leaves a truncated JPEG
+that the next run's "already downloaded" check would skip forever. Re-run the
+pipeline to fill in pages a bad patch of network cost you.
+
 ---
 
 ## What a run reports
