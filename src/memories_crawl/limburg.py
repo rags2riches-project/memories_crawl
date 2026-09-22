@@ -481,7 +481,15 @@ def _write_metadata(dest_dir: Path, code: str, item: dict, n_scans: int) -> None
 # ---------------------------------------------------------------------------
 
 
-LIST_FIELDS = ["code", "invnr", "place_or_kantoor", "datering", "pages", "title"]
+LIST_FIELDS = [
+    "code",
+    "invnr",
+    "place_or_kantoor",
+    "datering",
+    "pages",
+    "title",
+    *listing.YEAR_FIELDS,
+]
 
 
 def _cached_page_count(code: str, invnr: int) -> int | None:
@@ -592,6 +600,12 @@ def main(
                         f"  {it['datering']:<12}  {listing.fmt_count(pages_here):>6}"
                         f"  {it['title'][:60]}"
                     )
+                    # The datering is the archive's own, so the invnr never
+                    # needs stripping; the title is the fallback for the few
+                    # items whose title carries no trailing ", 1818-1828".
+                    year_from, year_to = listing.parse_years(it.get("datering", ""))
+                    if year_from is None:
+                        year_from, year_to = listing.parse_years(it.get("title", ""), it["invnr"])
                     csv_rows.append(
                         {
                             "code": code,
@@ -600,6 +614,7 @@ def main(
                             "datering": it.get("datering", ""),
                             "pages": listing.fmt_count(pages_here),
                             "title": it.get("title", ""),
+                            **listing.year_row(year_from, year_to),
                         }
                     )
             print()

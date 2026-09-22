@@ -468,6 +468,16 @@ def _write_metadata(
 # ---------------------------------------------------------------------------
 
 
+LIST_FIELDS = [
+    "kantoor",
+    "section",
+    "invnr",
+    "description",
+    "pages",
+    *listing.YEAR_FIELDS,
+]
+
+
 def main(
     invnrs: set[str] | None = None,
     list_invnrs: bool = False,
@@ -555,21 +565,24 @@ def main(
                 # --list-invnrs: print and skip download for this section
                 if list_invnrs:
                     print(f"\n  {kantoor} – {section['text'][:60]}:")
-                    print(f"    {'invnr':>6}  {'description':<30}  pages")
-                    print(f"    {'------':>6}  {'----------------------------':<30}  -----")
+                    print(f"    {'invnr':>6}  {'description':<30}  {'period':<11}  pages")
+                    print(f"    {'------':>6}  {'-' * 28:<30}  {'-' * 11:<11}  -----")
                     for invnr in sorted(invnr_pages.keys()):
                         pages_here = len(invnr_pages[invnr])
                         if only_digitized and not listing.has_scans(pages_here):
                             continue
-                        desc = invnr_texts.get(invnr, "")[:30]
-                        print(f"    {invnr:>6}  {desc:<30}  {pages_here:>5}")
+                        inv_text = invnr_texts.get(invnr, "")
+                        year_from, year_to = listing.parse_years(inv_text, invnr)
+                        period = listing.fmt_period(year_from, year_to)
+                        print(f"    {invnr:>6}  {inv_text[:30]:<30}  {period:<11}  {pages_here:>5}")
                         csv_rows.append(
                             {
                                 "kantoor": kantoor,
                                 "section": section["text"][:60],
                                 "invnr": invnr,
-                                "description": invnr_texts.get(invnr, ""),
+                                "description": inv_text,
                                 "pages": pages_here,
+                                **listing.year_row(year_from, year_to),
                             }
                         )
                     continue
@@ -635,9 +648,7 @@ def main(
             print()
             if csv_out and csv_rows:
                 with open(csv_out, "w", newline="", encoding="utf-8") as f:
-                    writer = csv.DictWriter(
-                        f, fieldnames=["kantoor", "section", "invnr", "description", "pages"]
-                    )
+                    writer = csv.DictWriter(f, fieldnames=LIST_FIELDS)
                     writer.writeheader()
                     writer.writerows(csv_rows)
                 print(f"Wrote {len(csv_rows)} rows to {csv_out}\n")

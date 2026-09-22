@@ -181,12 +181,18 @@ def _list_registers(
     csv_out: str | None = None,
     counts: dict[str, int | None] | None = None,
     only_digitized: bool = False,
+    years: dict[str, tuple[int | None, int | None]] | None = None,
 ) -> None:
     """Print a table of available inventory numbers from register metadata.
 
     ``counts`` maps register id → exact scan count and is only supplied under
     ``--count-scans``; otherwise the free digitized flag on the register
     decides between an exact ``0`` and an unknown ``?``.
+
+    ``years`` maps register id → ``(year_from, year_to)`` and is only supplied
+    under ``--dates``, which spends one request per register on it; without it
+    the period is an honest ``?`` rather than a span guessed from the
+    inventarisnummer.
     """
 
     def _n_scans(register: dict) -> int | None:
@@ -199,17 +205,20 @@ def _list_registers(
         n_scans = _n_scans(reg)
         if only_digitized and not listing.has_scans(n_scans):
             continue
+        year_from, year_to = (years or {}).get(reg.get("id") or "", (None, None))
         rows.append(
             {
                 "invnr": _register_invnr(reg),
                 "gemeente": _register_gemeente(reg),
                 "register_name": (reg.get("metadata") or {}).get("naam") or "",
                 "n_scans": listing.fmt_count(n_scans),
+                "period": listing.fmt_period(year_from, year_to),
+                **listing.year_row(year_from, year_to),
             }
         )
 
-    print(f"\n  {'invnr':>6}  {'gemeente':<20}  {'scans':>6}  register name")
-    print(f"  {'------':>6}  {'-' * 20:<20}  {'------':>6}  {'-------------'}")
+    print(f"\n  {'invnr':>6}  {'gemeente':<20}  {'period':<11}  {'scans':>6}  register name")
+    print(f"  {'------':>6}  {'-' * 20:<20}  {'-' * 11:<11}  {'------':>6}  {'-------------'}")
     for row in sorted(
         rows,
         key=lambda r: (
@@ -219,7 +228,7 @@ def _list_registers(
         ),
     ):
         print(
-            f"  {row['invnr'] or '?':>6}  {row['gemeente'] or '?':<20}"
+            f"  {row['invnr'] or '?':>6}  {row['gemeente'] or '?':<20}  {row['period']:<11}"
             f"  {row['n_scans']:>6}  {row['register_name'] or '?'}"
         )
     print()
@@ -285,6 +294,28 @@ def _load_done() -> set[str]:
     return done
 
 
+def _register_years(session: requests.Session, register: dict) -> tuple[int | None, int | None]:
+    """Period of one register, from the death dates of the people in it.
+
+    Drenthe's register metadata carries a gemeente and an inventarisnummer
+    but no datering, and its deeds carry no date either (issue #38).
+    Each person carries ``datum_overlijden``; ``rows=1000`` paging walks the
+    register in one or two requests, so this costs about what ``--count-scans``
+    does and is only paid under ``--dates``.
+    """
+    reg_id = register.get("id") or ""
+    if not reg_id:
+        return None, None
+    try:
+        persons = _paginate(session, "/person", f"register_id:{reg_id}", "person")
+    except requests.RequestException:
+        return None, None
+    return listing.span(
+        (p.get("metadata") or {}).get("datum_overlijden") or (p.get("metadata") or {}).get("datum")
+        for p in persons
+    )
+
+
 def _count(session: requests.Session, path: str, fq: str) -> int | None:
     """Exact number of hits for a filter, in a single request.
 
@@ -322,7 +353,14 @@ def _count_scans(session: requests.Session, register: dict) -> int | None:
     return _count(session, "/asset", f"register_id:{reg_id}")
 
 
-LIST_FIELDS = ["invnr", "gemeente", "register_name", "n_scans"]
+LIST_FIELDS = [
+    "invnr",
+    "gemeente",
+    "register_name",
+    "n_scans",
+    "period",
+    *listing.YEAR_FIELDS,
+]
 
 
 def main(
@@ -335,6 +373,7 @@ def main(
     workers: int = download.DEFAULT_WORKERS,
     kantoren: set[str] | None = None,
     refresh_cache: bool = False,
+    dates: bool = False,
 ) -> RunSummary | None:
     kantoor_filter = filters.normalize(kantoren)
 
@@ -381,8 +420,18 @@ def main(
             if count_scans:
                 print(f"Counting scans for {len(registers)} registers …")
                 counts = {reg.get("id") or "": _count_scans(session, reg) for reg in registers}
+            years: dict[str, tuple[int | None, int | None]] | None = None
+            if dates:
+                # One /person walk per register: the only way to date a register
+                # here, so it stays behind --dates instead of slowing every listing.
+                print(f"Resolving the period of {len(registers)} registers …")
+                years = {reg.get("id") or "": _register_years(session, reg) for reg in registers}
             _list_registers(
-                registers, csv_out=csv_out, counts=counts, only_digitized=only_digitized
+                registers,
+                csv_out=csv_out,
+                counts=counts,
+                only_digitized=only_digitized,
+                years=years,
             )
             return
 

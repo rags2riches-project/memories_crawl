@@ -154,7 +154,7 @@ side over the cached list.
 |---|---|
 | `src/memories_crawl/cli.py` | CLI dispatcher |
 | `src/memories_crawl/paths.py` | Output root, per-archive scan dirs and cache paths |
-| `src/memories_crawl/listing.py` | `--list-invnrs` count vocabulary: the `?` unknown marker, `has_scans()`, the "nothing to download" suffix |
+| `src/memories_crawl/listing.py` | `--list-invnrs` count *and* date vocabulary: the `?` unknown marker, `has_scans()`, the "nothing to download" suffix, `parse_years()`/`span()`/`YEAR_FIELDS` |
 | `src/memories_crawl/download.py` | Bounded thread pool, shared rate limiter, global 429 backoff, and `fetch_file` (per-image retry + atomic write) |
 
 | `src/memories_crawl/summary.py` | Download counters, per-archive summary, cross-archive total |
@@ -201,7 +201,8 @@ whole result set just to `len()` it.
 
 Every pipeline's `main()` takes `only_digitized: bool = False` and
 `count_scans: bool = False`; the CLI exposes them as `--only-digitized` and
-`--count-scans`.
+`--count-scans`. The period columns that sit next to these counts are described
+under *Period in `--list-invnrs`* below.
 
 Download runs print one summary line per register so a zero-yield register is
 visible in the log rather than inferred from the filesystem, e.g.
@@ -209,10 +210,54 @@ visible in the log rather than inferred from the filesystem, e.g.
 off what the register *holds*, not off what the current run fetched: a fully
 resumed register downloads nothing and must not be labelled empty.
 
-The Nationaal Archief entry cache uses `EAD_XML_URL + "#entries-v1"`, so legacy
-integer-list caches are re-collected. Availability filters apply after inventory
-and kantoor selection. Friesland records `partial` when `--only-digitized` skips
-person sidecars within a register, allowing a later full run to finish them.
+The Nationaal Archief entry cache uses `EAD_XML_URL + "#entries-v2"`, so legacy
+integer-list caches (and the `v1` rows written before the period columns) are
+re-collected. Availability filters apply after inventory and kantoor
+selection. Friesland records `partial` when `--only-digitized` skips person
+sidecars within a register, allowing a later full run to finish them.
+
+## Period in `--list-invnrs` (issue #38)
+
+A count answers "is there anything here?"; the *period* answers "is it the
+right thing?". Without it a period-limited plan can only rank inventarisnummers
+against a date span, which is a guess: one such plan put **80.6% of the deaths
+it fetched outside the target years** and 58 GB of scans had to be deleted.
+
+Every pipeline's listing therefore carries `year_from` and `year_to` (the last
+two entries of its `LIST_FIELDS`, via `listing.YEAR_FIELDS`), and the Memorix
+and Nationaal Archief tables also print a human `period` column
+(`1818`, `1837-1838`, `?`). `listing.parse_years(text, invnr)` turns a datering
+into the pair; `listing.span(values)` folds years or ISO dates into one.
+
+**An unparsed date is `?`, never a year.** `parse_years` strips the leading
+inventarisnummer from a MAIS description before reading it (`"1888  1901 eerste
+kwartaal"` is 1901, and `"1888"` alone is no year at all), and only accepts
+1795–1935, so memorienummers and page counts cannot become periods. Three of
+the 3,958 Nationaal Archief items carry a typo (`"l872 okt. - dec."`) and
+report `?`; do not "fix" them by guessing.
+
+| Archive | where the period comes from | cost |
+|---|---|---|
+| nationaalarchief | `<unitdate normal="1818-01/1818-03">` in the EAD, else the `unittitle` text | free — 3,955 of 3,958 items, from the XML already downloaded |
+| friesland | `register["metadata"]["periode"]` (`[1837, 1838]`) | free — 1,106 of 1,107 registers |
+| gelderland, zeeland, utrechtsarchief, noordholland, overijssel | the MAIS tree link text (`"12  1843 jan.-juni"`) | free — the discovery/token pass reads it anyway |
+| limburg | the archive's own `datering` (`"Amby, 1818-1828"`), title as fallback | free |
+| drentsarchief, bhic | `min`/`max` of the persons' `datum_overlijden` | one `/person` walk per register — **`--dates` only** |
+
+`--dates` is passed to `cli.DATE_QUERY_PIPELINES` (`drentsarchief`, `bhic`)
+only, the way `--refresh-cache` is passed to `CACHED_LISTING_PIPELINES`;
+everywhere else the period is free, so it is always reported and the flag has
+nothing to switch on. Those two `main()`s take `dates: bool = False`.
+
+Where a register sits inside a dated section (noordholland's `period` column,
+gelderland's period sub-sections), the register's own years are **not**
+inherited from the section: the section spans years the single register does
+not, and a wider bound presented as the register's period misleads exactly like
+a guessed one. The section text stays in its own column.
+
+The Overijssel token cache now stores `inv_text` per page. A cache harvested
+before this change has none, so its listing reports an empty description and a
+`?` period until it is re-harvested — never a date inferred from elsewhere.
 
 ## Filters: `--invnr` and `--kantoor`
 

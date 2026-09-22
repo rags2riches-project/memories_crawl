@@ -97,19 +97,64 @@ def _get_unittitle(elem: ET.Element) -> str:
     return e.text.strip() if e is not None and e.text else ""
 
 
+def _leaf_description(elem: ET.Element) -> str:
+    """The item's own datering, e.g. ``"1818 jan. - mrt."``.
+
+    The text lives either directly in ``unittitle`` ("1849, memories van
+    aangifte, jan. - juni") or inside a nested ``unitdate``, so the whole
+    subtree is flattened rather than just ``unittitle.text``.
+    """
+    title = elem.find("did/unittitle")
+    if title is None:
+        return ""
+    return " ".join("".join(title.itertext()).split())
+
+
+def _leaf_years(elem: ET.Element) -> tuple[int | None, int | None]:
+    """Period of one inventory item, from the EAD we already download.
+
+    ``<unitdate normal="1818-01/1818-03">`` is machine-readable but present on
+    only about half the items; the rest carry the years in the title text
+    ("1849, memories van aangifte, jan. - juni"), so that is read as a
+    fallback. Together they date 3,955 of the 3,958 items in section 2.4, and
+    neither costs a request -- the date is free where issue #38 assumed one
+    viewer fetch per invnr. The three that stay unknown are typos in the
+    archive's own text ("l872 okt. - dec."), reported as ``?``.
+    """
+    normals = [
+        part
+        for unitdate in elem.findall("did/unittitle/unitdate") + elem.findall("did/unitdate")
+        for part in (unitdate.get("normal") or "").split("/")
+    ]
+    year_from, year_to = listing.span(normals)
+    if year_from is not None:
+        return year_from, year_to
+    return listing.parse_years(_leaf_description(elem))
+
+
 def _collect_leaf_invnrs(elem: ET.Element) -> list[dict]:
     """Recursively collect leaf-level purely-numeric unitids as inventory rows.
 
-    Each row is ``{invnr, has_scans}``. ``has_scans`` comes from the ``<dao>``
-    METS link the EAD attaches to every digitized item, so whether an
-    inventarisnummer has scans at all is known from the one XML download the
-    pipeline already makes -- no viewer page needed.
+    Each row is ``{invnr, has_scans, description, year_from, year_to}``.
+    ``has_scans`` comes from the ``<dao>`` METS link the EAD attaches to every
+    digitized item, so whether an inventarisnummer has scans at all is known
+    from the one XML download the pipeline already makes -- no viewer page
+    needed.  The same is true of the period (issue #38).
     """
     children = _get_children(elem)
     if not children:
         uid = _get_unitid(elem)
         if uid.isdigit():
-            return [{"invnr": int(uid), "has_scans": bool(elem.findall("did/dao"))}]
+            year_from, year_to = _leaf_years(elem)
+            return [
+                {
+                    "invnr": int(uid),
+                    "has_scans": bool(elem.findall("did/dao")),
+                    "description": _leaf_description(elem),
+                    "year_from": year_from,
+                    "year_to": year_to,
+                }
+            ]
         return []
     results: list[dict] = []
     for child in children:
@@ -225,6 +270,13 @@ def _write_metadata(dest_dir: Path, invnr: int, html: str, scans: list[dict]) ->
         json.dump(meta, f, ensure_ascii=False, indent=2)
 
 
+def _as_year(cell: str | int | None) -> int | None:
+    """Read a ``year_from`` / ``year_to`` cell back, treating ``?`` as unknown."""
+    if isinstance(cell, int):
+        return cell
+    return int(cell) if cell and str(cell).isdigit() else None
+
+
 def _list_inventory(
     entries: list[dict],
     csv_out: str | None = None,
@@ -242,6 +294,8 @@ def _list_inventory(
                 "invnr": entry["invnr"],
                 "kantoor": entry.get("kantoor") or "",
                 "n_scans": listing.fmt_count(n_scans),
+                "description": entry.get("description") or "",
+                **listing.year_row(entry.get("year_from"), entry.get("year_to")),
             }
         )
 
@@ -250,10 +304,11 @@ def _list_inventory(
         return
 
     print(f"\n{len(rows)} inventory numbers:\n")
-    print(f"  {'invnr':>6}  {'scans':>6}  kantoor")
-    print(f"  {'------':>6}  {'------':>6}  -------")
+    print(f"  {'invnr':>6}  {'scans':>6}  {'period':<11}  kantoor")
+    print(f"  {'------':>6}  {'------':>6}  {'-' * 11:<11}  -------")
     for row in rows:
-        print(f"  {row['invnr']:>6}  {row['n_scans']:>6}  {row['kantoor']}")
+        period = listing.fmt_period(_as_year(row["year_from"]), _as_year(row["year_to"]))
+        print(f"  {row['invnr']:>6}  {row['n_scans']:>6}  {period:<11}  {row['kantoor']}")
     print()
 
     if csv_out:
@@ -316,13 +371,24 @@ def _parse_ead_entries(xml_bytes: bytes) -> list[dict]:
 def _fallback_entries() -> list[dict]:
     """Return the hardcoded fallback inventory rows.
 
-    The ranges carry a kantoor but no digitization marker, so ``has_scans`` is
-    ``None`` (unknown) rather than a guess either way.
+    The ranges carry a kantoor but neither a digitization marker nor a
+    datering, so ``has_scans`` and the years are ``None`` (unknown) rather than
+    a guess either way.
     """
     by_invnr: dict[int, dict] = {}
     for lo, hi, kantoor in _FALLBACK_INVNR_RANGES:
         for n in range(lo, hi + 1):
-            by_invnr.setdefault(n, {"invnr": n, "kantoor": kantoor, "has_scans": None})
+            by_invnr.setdefault(
+                n,
+                {
+                    "invnr": n,
+                    "kantoor": kantoor,
+                    "has_scans": None,
+                    "description": "",
+                    "year_from": None,
+                    "year_to": None,
+                },
+            )
     return [by_invnr[n] for n in sorted(by_invnr)]
 
 
@@ -338,14 +404,17 @@ def _collect_inventory_entries(session: requests.Session) -> list[dict]:
 def _fetch_inventory_entries(session: requests.Session, refresh_cache: bool = False) -> list[dict]:
     """Cache full EAD entries with a key distinct from legacy integer lists.
 
-    Failed collection leaves the cache untouched; fallback rows are never cached.
+    The key is versioned: ``#entries-v2`` rows carry the item's period, so a
+    ``v1`` cache written before issue #38 is re-collected rather than served
+    without dates.  Failed collection leaves the cache untouched; fallback rows
+    are never cached.
     """
     try:
         return regcache.load_or_collect(
             ARCHIVE,
             INVENTORY_CACHE_NAME,
             lambda: _collect_inventory_entries(session),
-            key=EAD_XML_URL + "#entries-v1",
+            key=EAD_XML_URL + "#entries-v2",
             refresh=refresh_cache,
         )
     except Exception as exc:
@@ -373,7 +442,7 @@ def _count_scans(session: requests.Session, invnr: int) -> int | None:
         return None
 
 
-LIST_FIELDS = ["invnr", "kantoor", "n_scans"]
+LIST_FIELDS = ["invnr", "kantoor", "n_scans", "description", *listing.YEAR_FIELDS]
 
 
 def _entry_n_scans(entry: dict, counts: dict[int, int | None] | None) -> int | None:
