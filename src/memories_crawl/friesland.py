@@ -166,6 +166,20 @@ def _kantoor_from_register(register: dict) -> str:
     return naam or "onbekend"
 
 
+def _register_years(register: dict) -> tuple[int | None, int | None]:
+    """Period of one register, free from the listing we already fetch.
+
+    Tresoar indexes it as ``periode: [1837, 1838]`` on the register itself --
+    1,106 of the 1,107 registers carry one -- so issue #38's per-deed
+    ``datum_overlijden`` walk is not needed here.  The one register without a
+    periode reports ``?``.
+    """
+    periode = (register.get("metadata") or {}).get("periode")
+    if isinstance(periode, (list, tuple)):
+        return listing.span(periode)
+    return listing.span([periode])
+
+
 def _person_slug(person: dict) -> str:
     """Generate a safe directory name from person metadata."""
     pmd = person.get("metadata") or {}
@@ -203,6 +217,7 @@ def _write_person_metadata(
         "geslacht": pmd.get("geslacht") or "",
         "diversen": dmd.get("diversen") or "",
         "register_naam": rmd.get("naam") or "",
+        "register_periode": listing.fmt_period(*_register_years(register)),
         "n_scans": n_scans,
     }
     dest_dir.mkdir(parents=True, exist_ok=True)
@@ -258,6 +273,7 @@ def _list_registers(
             n_persons, n_with_scans = None, (None if _register_is_digitized(reg) else 0)
         if only_digitized and not listing.has_scans(n_with_scans):
             continue
+        year_from, year_to = _register_years(reg)
         rows.append(
             {
                 "invnr": rmd.get("inventarisnummer") or "",
@@ -265,14 +281,22 @@ def _list_registers(
                 "register_name": rmd.get("naam") or "",
                 "n_persons": listing.fmt_count(n_persons),
                 "n_with_scans": listing.fmt_count(n_with_scans),
+                "period": listing.fmt_period(year_from, year_to),
+                **listing.year_row(year_from, year_to),
             }
         )
 
-    print(f"\n  {'invnr':>6}  {'kantoor':<14}  {'persons':>7}  {'w/scans':>7}  register name")
-    print(f"  {'------':>6}  {'-' * 14:<14}  {'-------':>7}  {'-------':>7}  -------------")
+    print(
+        f"\n  {'invnr':>6}  {'kantoor':<14}  {'period':<11}"
+        f"  {'persons':>7}  {'w/scans':>7}  register name"
+    )
+    print(
+        f"  {'------':>6}  {'-' * 14:<14}  {'-' * 11:<11}"
+        f"  {'-------':>7}  {'-------':>7}  -------------"
+    )
     for row in rows:
         print(
-            f"  {row['invnr'] or '?':>6}  {row['kantoor']:<14}"
+            f"  {row['invnr'] or '?':>6}  {row['kantoor']:<14}  {row['period']:<11}"
             f"  {row['n_persons']:>7}  {row['n_with_scans']:>7}  {row['register_name'] or '?'}"
         )
     print()
@@ -340,7 +364,15 @@ def _register_counts(
     return len(eligible), sum(bool(deed_by_id[p["deed_id"]].get("asset")) for p in eligible)
 
 
-LIST_FIELDS = ["invnr", "kantoor", "register_name", "n_persons", "n_with_scans"]
+LIST_FIELDS = [
+    "invnr",
+    "kantoor",
+    "register_name",
+    "n_persons",
+    "n_with_scans",
+    "period",
+    *listing.YEAR_FIELDS,
+]
 
 
 def main(

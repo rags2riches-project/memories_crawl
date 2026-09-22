@@ -96,6 +96,7 @@ def _run_drentsarchief(
     workers: int = download.DEFAULT_WORKERS,
     kantoren: set[str] | None = None,
     refresh_cache: bool = False,
+    dates: bool = False,
 ) -> RunSummary | None:
     print("=== Drents Archief pipeline (Memorix API) ===")
     from memories_crawl.drentsarchief import main as run
@@ -110,6 +111,7 @@ def _run_drentsarchief(
         workers=workers,
         kantoren=kantoren,
         refresh_cache=refresh_cache,
+        dates=dates,
     )
 
 
@@ -123,6 +125,7 @@ def _run_bhic(
     workers: int = download.DEFAULT_WORKERS,
     kantoren: set[str] | None = None,
     refresh_cache: bool = False,
+    dates: bool = False,
 ) -> RunSummary | None:
     print("=== BHIC pipeline (Noord-Brabant, Memorix API) ===")
     from memories_crawl.bhic import main as run
@@ -137,6 +140,7 @@ def _run_bhic(
         workers=workers,
         kantoren=kantoren,
         refresh_cache=refresh_cache,
+        dates=dates,
     )
 
 
@@ -308,6 +312,12 @@ PIPELINES = {
 #: own inventory/token caches and are not covered by that flag.
 CACHED_LISTING_PIPELINES = frozenset({"friesland", "nationaalarchief", "drentsarchief", "bhic"})
 
+#: Pipelines that can only date a register by querying for it, one request per
+#: register, and therefore accept ``--dates``.  Everywhere else the period
+#: comes with the inventory the pipeline already fetches, so it is always
+#: reported and the flag has nothing to switch on (issue #38).
+DATE_QUERY_PIPELINES = frozenset({"drentsarchief", "bhic"})
+
 
 def main() -> None:
     parser = argparse.ArgumentParser(
@@ -393,6 +403,17 @@ def main() -> None:
         ),
     )
     parser.add_argument(
+        "--dates",
+        action="store_true",
+        default=False,
+        help=(
+            "Resolve the period each register covers in --list-invnrs where "
+            "that costs extra requests (drentsarchief, bhic: one /person walk "
+            "per register). Every other pipeline reports year_from/year_to for "
+            "free and always does."
+        ),
+    )
+    parser.add_argument(
         "--count-scans",
         action="store_true",
         default=False,
@@ -427,6 +448,8 @@ def main() -> None:
         kwargs["kantoren"] = kantoor_filter
         if name in CACHED_LISTING_PIPELINES:
             kwargs["refresh_cache"] = args.refresh_cache
+        if name in DATE_QUERY_PIPELINES:
+            kwargs["dates"] = args.dates
         failure: Exception | None = None
         # collect() sees the pipeline's summary even if the call never returns,
         # so a run that dies halfway still reports what it managed to download.

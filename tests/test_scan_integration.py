@@ -219,7 +219,16 @@ def test_na_listing_counts_only_selected_entries(monkeypatch, tmp_path, workers)
     assert counted == [2278]
     with out.open() as stream:
         assert list(csv.DictReader(stream)) == [
-            {"invnr": "2278", "kantoor": "Alphen", "n_scans": "?"}
+            {
+                "invnr": "2278",
+                "kantoor": "Alphen",
+                "n_scans": "?",
+                # The stub entries carry no EAD datering, which shows as '?'
+                # rather than as a year inferred from the inventarisnummer.
+                "description": "",
+                "year_from": "?",
+                "year_to": "?",
+            }
         ]
 
 

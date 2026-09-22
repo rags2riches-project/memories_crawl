@@ -77,12 +77,15 @@ _INV3_URL = (
     "&minr={minr}&milang=nl&miview=inv3"
 )
 
-# JS to collect all stk3 toggle-call argument strings from the inv3 DOM
+# JS to collect every stk3 toggle call from the inv3 DOM, with the link text.
+# The text is the item's datering ("12  1843 jan.-juni"), which the archive
+# renders right there and which is the only date this pipeline can ever see --
+# see gelderland._JS_COLLECT_INVNRS, which has always kept it (issue #38).
 _JS_COLLECT_STK3 = """() => {
     return Array.from(document.querySelectorAll('a[onclick*="stk3"]')).map(a => {
         const oc = a.getAttribute('onclick');
         const m = oc.match(/mi_inv3_toggle_stk\\((.+?)\\);\\s*return/s);
-        return m ? m[1] : null;
+        return m ? { args: m[1], text: (a.textContent || '').trim().substring(0, 200) } : null;
     }).filter(Boolean);
 }"""
 
@@ -216,6 +219,8 @@ def _fetch_page_tokens_via_playwright(minr: int) -> list[dict]:
 
     # last-wins dedup: later stk3 calls give more-specific tokens than auto-load
     pages_by_key: dict[tuple[int, int], dict] = {}
+    # invnr → the tree description MAIS renders for it, e.g. "12  1843 jan.-juni"
+    inv_texts: dict[int, str] = {}
 
     with sync_playwright() as pw:
         browser = pw.chromium.launch(headless=True)
@@ -228,11 +233,13 @@ def _fetch_page_tokens_via_playwright(minr: int) -> list[dict]:
         page.goto(_INV3_URL.format(minr=minr), wait_until="networkidle", timeout=60_000)
         page.wait_for_selector('a[onclick*="stk3"]', state="attached", timeout=30_000)
 
-        # Collect all stk3 argument strings from child item links
-        stk3_arg_list: list[str] = page.evaluate(_JS_COLLECT_STK3)
-        print(f"    found {len(stk3_arg_list)} stk3 items")
+        # Collect all stk3 calls (argument string + description) from child item links
+        stk3_items: list[dict] = page.evaluate(_JS_COLLECT_STK3)
+        print(f"    found {len(stk3_items)} stk3 items")
 
-        for idx, args in enumerate(stk3_arg_list):
+        for idx, item in enumerate(stk3_items):
+            args = item["args"]
+            text = (item.get("text") or "").strip()
             # Snapshot existing strip IDs so we can identify the new one below
             before_ids: set[str] = set(page.evaluate(_JS_STRIP_IDS))
 
@@ -263,16 +270,24 @@ def _fetch_page_tokens_via_playwright(minr: int) -> list[dict]:
                 rec = _parse_thumb_src(src)
                 if rec:
                     pages_by_key[(rec["invnr"], rec["page"])] = rec
+                    # The DOM fallback above can return pages of an item other
+                    # than this link's, so a description that starts with an
+                    # inventarisnummer is only kept for that number.
+                    leading = re.match(r"\s*(\d+)\b", text)
+                    if text and (leading is None or int(leading.group(1)) == rec["invnr"]):
+                        inv_texts.setdefault(rec["invnr"], text)
 
             if (idx + 1) % 25 == 0:
                 print(
-                    f"    processed {idx + 1}/{len(stk3_arg_list)} items, "
+                    f"    processed {idx + 1}/{len(stk3_items)} items, "
                     f"{len(pages_by_key)} pages so far"
                 )
 
         browser.close()
 
     result = sorted(pages_by_key.values(), key=lambda r: (r["invnr"], r["page"]))
+    for rec in result:
+        rec["inv_text"] = inv_texts.get(rec["invnr"], "")
     print(f"    total pages collected: {len(result)}")
 
     # Save to cache for future runs
@@ -306,7 +321,19 @@ def _download_file(session: requests.Session, url: str, dest: Path) -> str:
     )
 
 
-def _write_metadata(dest_dir: Path, kantoor: str, invnr: int, n_scans: int) -> None:
+def _datering(inv_text: str) -> str:
+    """The description with its leading inventarisnummer stripped.
+
+    MAIS renders "12  1843 jan.-juni"; the sidecar wants "1843 jan.-juni", the
+    same shape gelderland writes.
+    """
+    m = re.match(r"^\s*\d+\s+(.+)$", inv_text)
+    return m.group(1).strip() if m else inv_text.strip()
+
+
+def _write_metadata(
+    dest_dir: Path, kantoor: str, invnr: int, n_scans: int, inv_text: str = ""
+) -> None:
     sidecar = dest_dir / "metadata.json"
     # Always rewrite: n_scans may have been wrong on a prior truncated run.
     meta = {
@@ -315,11 +342,16 @@ def _write_metadata(dest_dir: Path, kantoor: str, invnr: int, n_scans: int) -> N
         "brontype": "Memorie van Successie",
         "kantoor": kantoor,
         "inventarisnummer": str(invnr),
+        "datering": _datering(inv_text),
+        "omschrijving": inv_text,
         "n_scans": n_scans,
     }
     dest_dir.mkdir(parents=True, exist_ok=True)
     with open(sidecar, "w", encoding="utf-8") as f:
         json.dump(meta, f, ensure_ascii=False, indent=2)
+
+
+LIST_FIELDS = ["kantoor", "invnr", "pages", "description", *listing.YEAR_FIELDS]
 
 
 def main(
@@ -363,10 +395,15 @@ def main(
                 print(f"    WARNING: no pages found for {kantoor}")
                 continue
 
-            # Group by invnr to write per-invnr metadata
+            # Group by invnr to write per-invnr metadata. The description comes
+            # along with the tokens, so a warm cache from before issue #38 simply
+            # reports no date rather than a wrong one.
             invnr_pages: dict[int, list[dict]] = {}
+            invnr_texts: dict[int, str] = {}
             for p in pages:
                 invnr_pages.setdefault(p["invnr"], []).append(p)
+                if not invnr_texts.get(p["invnr"]):
+                    invnr_texts[p["invnr"]] = p.get("inv_text") or ""
 
             # --invnr filter before download
             if invnrs is not None:
@@ -383,18 +420,25 @@ def main(
                 # to run before anything can be downloaded anyway, so --count-scans
                 # has nothing left to resolve.
                 print(f"\n{kantoor}:")
-                print(f"  {'invnr':>6}  pages")
-                print(f"  {'------':>6}  -----")
+                print(f"  {'invnr':>6}  {'pages':>6}  {'period':<11}  description")
+                print(f"  {'------':>6}  {'------':>6}  {'-' * 11:<11}  -----------")
                 for invnr in sorted(invnr_pages.keys()):
                     pages_here = len(invnr_pages[invnr])
                     if only_digitized and not listing.has_scans(pages_here):
                         continue
-                    print(f"  {invnr:>6}  {pages_here:>5}")
+                    inv_text = invnr_texts.get(invnr, "")
+                    year_from, year_to = listing.parse_years(inv_text, invnr)
+                    print(
+                        f"  {invnr:>6}  {pages_here:>6}"
+                        f"  {listing.fmt_period(year_from, year_to):<11}  {inv_text[:60]}"
+                    )
                     csv_rows.append(
                         {
                             "kantoor": kantoor,
                             "invnr": invnr,
                             "pages": pages_here,
+                            "description": inv_text,
+                            **listing.year_row(year_from, year_to),
                         }
                     )
                 continue
@@ -407,7 +451,9 @@ def main(
             kantoor_tally = PageTally()
             for invnr, inv_pages in sorted(invnr_pages.items()):
                 dest_dir = output_dir / kantoor / str(invnr)
-                _write_metadata(dest_dir, kantoor, invnr, len(inv_pages))
+                _write_metadata(
+                    dest_dir, kantoor, invnr, len(inv_pages), invnr_texts.get(invnr, "")
+                )
                 jobs = [
                     download.Job(
                         _image_url(invnr, p["page"], p["miahd"], p["rdt"], p["open"]),
@@ -440,7 +486,7 @@ def main(
             print()
             if csv_out and csv_rows:
                 with open(csv_out, "w", newline="", encoding="utf-8") as f:
-                    writer = csv.DictWriter(f, fieldnames=["kantoor", "invnr", "pages"])
+                    writer = csv.DictWriter(f, fieldnames=LIST_FIELDS)
                     writer.writeheader()
                     writer.writerows(csv_rows)
                 print(f"Wrote {len(csv_rows)} rows to {csv_out}\n")

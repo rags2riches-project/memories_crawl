@@ -292,7 +292,11 @@ def test_nationaalarchief_listing_columns(tmp_path, capsys) -> None:
     nationaalarchief._list_inventory(entries, csv_out=str(out))
 
     header, rows = _read_csv(out)
-    assert header == nationaalarchief.LIST_FIELDS == ["invnr", "kantoor", "n_scans"]
+    assert (
+        header
+        == nationaalarchief.LIST_FIELDS
+        == ["invnr", "kantoor", "n_scans", "description", "year_from", "year_to"]
+    )
     assert {r["invnr"]: r["n_scans"] for r in rows} == {"2276": listing.UNKNOWN, "2277": "0"}
     assert "Kantoor Alphen aan de Rijn" in capsys.readouterr().out
 

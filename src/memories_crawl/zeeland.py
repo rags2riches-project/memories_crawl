@@ -541,7 +541,7 @@ def _write_metadata(
 # ---------------------------------------------------------------------------
 
 
-LIST_FIELDS = ["kantoor", "invnr", "description", "pages"]
+LIST_FIELDS = ["kantoor", "invnr", "description", "pages", *listing.YEAR_FIELDS]
 
 
 def _cached_page_counts(kantoor_minr: int) -> tuple[dict[int, int], bool] | None:
@@ -687,8 +687,8 @@ def main(
                     cached = _cached_page_counts(kantoor_minr)
 
                 print(f"\n{kantoor}:")
-                print(f"  {'invnr':>6}  {'pages':>6}  description")
-                print(f"  {'------':>6}  {'------':>6}  -----------")
+                print(f"  {'invnr':>6}  {'pages':>6}  {'period':<11}  description")
+                print(f"  {'------':>6}  {'------':>6}  {'-' * 11:<11}  -----------")
                 for it in digitized:
                     if cached is None:
                         pages_here: int | None = None
@@ -697,8 +697,10 @@ def main(
                         pages_here = counts.get(it["invnr"], 0 if complete else None)
                     if only_digitized and not listing.has_scans(pages_here):
                         continue
+                    year_from, year_to = listing.parse_years(it["text"], it["invnr"])
                     print(
-                        f"  {it['invnr']:>6}  {listing.fmt_count(pages_here):>6}  {it['text'][:60]}"
+                        f"  {it['invnr']:>6}  {listing.fmt_count(pages_here):>6}"
+                        f"  {listing.fmt_period(year_from, year_to):<11}  {it['text'][:60]}"
                     )
                     csv_rows.append(
                         {
@@ -706,6 +708,7 @@ def main(
                             "invnr": it["invnr"],
                             "description": it["text"],
                             "pages": listing.fmt_count(pages_here),
+                            **listing.year_row(year_from, year_to),
                         }
                     )
                 continue
