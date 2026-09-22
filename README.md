@@ -534,7 +534,7 @@ The pipeline uses **Playwright/Chromium** to drive a headless browser:
 3. Harvests per-page tokens from the rendered `<img src>` attributes.
 4. Downloads full-size scans using those tokens.
 
-Token results are cached per-kantoor in `<out-dir>/.cache/overijssel/tokens_minr_{minr}.json` so the Playwright pass does not need to repeat on reruns.
+Token results are cached per-kantoor in `<out-dir>/.cache/overijssel/tokens_minr_{minr}.json` so the Playwright pass does not need to repeat on reruns. Cache files include a schema version; an older incompatible cache is re-harvested automatically.
 
 **First-time setup**: run `uv run playwright install chromium` after `uv sync`.
 
