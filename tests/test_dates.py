@@ -324,6 +324,10 @@ def _ov_tokens(invnr: int, pages: int, inv_text: str) -> list[dict]:
     ]
 
 
+def _ov_cache(tokens: list[dict]) -> str:
+    return json.dumps({"schema_version": overijssel.TOKEN_CACHE_SCHEMA_VERSION, "tokens": tokens})
+
+
 @pytest.fixture
 def overijssel_stub(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
@@ -336,7 +340,7 @@ def test_overijssel_listing_keeps_the_scraped_description(overijssel_stub, tmp_p
     cache = overijssel._get_token_cache_path(2227676)
     cache.parent.mkdir(parents=True, exist_ok=True)
     cache.write_text(
-        json.dumps(_ov_tokens(1, 2, "1  1818") + _ov_tokens(12, 3, "12  1843 jan.-juni")),
+        _ov_cache(_ov_tokens(1, 2, "1  1818") + _ov_tokens(12, 3, "12  1843 jan.-juni")),
         encoding="utf-8",
     )
 
@@ -351,21 +355,27 @@ def test_overijssel_listing_keeps_the_scraped_description(overijssel_stub, tmp_p
     assert (by_invnr["12"]["year_from"], by_invnr["12"]["year_to"]) == ("1843", "1843")
 
 
-def test_overijssel_cache_from_before_the_fix_reports_unknown(overijssel_stub, tmp_path) -> None:
-    """An old token cache has no description; that is a '?', not a wrong year."""
+def test_overijssel_cache_from_before_the_fix_is_reharvested(
+    overijssel_stub, monkeypatch, tmp_path
+) -> None:
+    """An old token cache is ignored so the fixed collector can replace it."""
     tokens = _ov_tokens(1, 2, "")
     for tok in tokens:
         del tok["inv_text"]
     cache = overijssel._get_token_cache_path(2227676)
     cache.parent.mkdir(parents=True, exist_ok=True)
     cache.write_text(json.dumps(tokens), encoding="utf-8")
+    assert overijssel._load_cached_tokens(2227676) is None
+
+    refreshed = _ov_tokens(1, 2, "1  1818")
+    monkeypatch.setattr(overijssel, "_fetch_page_tokens_via_playwright", lambda minr: refreshed)
 
     out = tmp_path / "ov.csv"
     overijssel.main(list_invnrs=True, csv_out=str(out))
 
     _, rows = _read_csv(out)
-    assert rows[0]["description"] == ""
-    assert rows[0]["year_from"] == listing.UNKNOWN
+    assert rows[0]["description"] == "1  1818"
+    assert rows[0]["year_from"] == "1818"
 
 
 def test_overijssel_metadata_carries_the_datering(tmp_path) -> None:
@@ -379,6 +389,7 @@ def test_overijssel_scrapes_the_same_dom_field_as_gelderland() -> None:
     """Both are MAIS: the tree link text is right there in the DOM."""
     assert "textContent" in overijssel._JS_COLLECT_STK3
     assert "textContent" in gelderland._JS_COLLECT_INVNRS
+    assert '.mi_tree_node.tpDB a[onclick*="stk3"]' in overijssel._JS_COLLECT_STK3
 
 
 # ---------------------------------------------------------------------------

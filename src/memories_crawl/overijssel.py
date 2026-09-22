@@ -77,17 +77,22 @@ _INV3_URL = (
     "&minr={minr}&milang=nl&miview=inv3"
 )
 
-# JS to collect every stk3 toggle call from the inv3 DOM, with the link text.
+# JS to collect the register stk3 toggle calls from the inv3 DOM, with the link text.
 # The text is the item's datering ("12  1843 jan.-juni"), which the archive
 # renders right there and which is the only date this pipeline can ever see --
 # see gelderland._JS_COLLECT_INVNRS, which has always kept it (issue #38).
 _JS_COLLECT_STK3 = """() => {
-    return Array.from(document.querySelectorAll('a[onclick*="stk3"]')).map(a => {
+    return Array.from(document.querySelectorAll('.mi_tree_node.tpDB a[onclick*="stk3"]')).map(a => {
         const oc = a.getAttribute('onclick');
         const m = oc.match(/mi_inv3_toggle_stk\\((.+?)\\);\\s*return/s);
         return m ? { args: m[1], text: (a.textContent || '').trim().substring(0, 200) } : null;
     }).filter(Boolean);
 }"""
+
+# A token cache written before issue #40 either lacks descriptions altogether
+# or may have descriptions claimed by structural tree nodes.  Changing the
+# schema makes those caches safely self-invalidating after an upgrade.
+TOKEN_CACHE_SCHEMA_VERSION = 2
 
 # JS to snapshot which strip IDs are currently in mi_strip_store
 _JS_STRIP_IDS = "() => Object.keys(mi_strip_store || {})"
@@ -157,19 +162,32 @@ def _get_token_cache_path(minr: int) -> Path:
     return paths.cache_file(ARCHIVE, f"tokens_minr_{minr}.json")
 
 
-def _load_cached_tokens(minr: int) -> list[dict] | None:
-    """Load cached page tokens if they exist and are non-empty."""
+def _read_cached_tokens(minr: int) -> list[dict] | None:
+    """Read a current-schema, non-empty token cache, if one exists."""
     cache_path = _get_token_cache_path(minr)
     if cache_path.exists():
         try:
             with open(cache_path, encoding="utf-8") as f:
-                tokens = json.load(f)
-            if tokens:
-                print(f"    loaded {len(tokens)} cached tokens")
+                cache = json.load(f)
+            if (
+                isinstance(cache, dict)
+                and cache.get("schema_version") == TOKEN_CACHE_SCHEMA_VERSION
+                and isinstance(cache.get("tokens"), list)
+                and cache["tokens"]
+            ):
+                tokens: list[dict] = cache["tokens"]
                 return tokens
         except (OSError, json.JSONDecodeError):
             pass
     return None
+
+
+def _load_cached_tokens(minr: int) -> list[dict] | None:
+    """Load cached page tokens if they exist and are non-empty."""
+    tokens = _read_cached_tokens(minr)
+    if tokens is not None:
+        print(f"    loaded {len(tokens)} cached tokens")
+    return tokens
 
 
 def _save_cached_tokens(minr: int, tokens: list[dict]) -> None:
@@ -177,7 +195,12 @@ def _save_cached_tokens(minr: int, tokens: list[dict]) -> None:
     cache_path = _get_token_cache_path(minr)
     cache_path.parent.mkdir(parents=True, exist_ok=True)
     with open(cache_path, "w", encoding="utf-8") as f:
-        json.dump(tokens, f, ensure_ascii=False, indent=2)
+        json.dump(
+            {"schema_version": TOKEN_CACHE_SCHEMA_VERSION, "tokens": tokens},
+            f,
+            ensure_ascii=False,
+            indent=2,
+        )
 
 
 def _cached_kantoor_holds(minr: int, invnrs: set[str]) -> bool | None:
@@ -186,15 +209,8 @@ def _cached_kantoor_holds(minr: int, invnrs: set[str]) -> bool | None:
     ``None`` when there is no cache: an absent cache is not evidence that the
     kantoor lacks the invnr, so the caller must fall through to the harvest.
     """
-    cache_path = _get_token_cache_path(minr)
-    if not cache_path.exists():
-        return None
-    try:
-        with open(cache_path, encoding="utf-8") as f:
-            tokens = json.load(f)
-    except (OSError, json.JSONDecodeError):
-        return None
-    if not tokens:
+    tokens = _read_cached_tokens(minr)
+    if tokens is None:
         return None
     return any(str(t.get("invnr")) in invnrs for t in tokens)
 
@@ -233,7 +249,7 @@ def _fetch_page_tokens_via_playwright(minr: int) -> list[dict]:
         page.goto(_INV3_URL.format(minr=minr), wait_until="networkidle", timeout=60_000)
         page.wait_for_selector('a[onclick*="stk3"]', state="attached", timeout=30_000)
 
-        # Collect all stk3 calls (argument string + description) from child item links
+        # Collect only register stk3 calls (argument string + description).
         stk3_items: list[dict] = page.evaluate(_JS_COLLECT_STK3)
         print(f"    found {len(stk3_items)} stk3 items")
 
@@ -271,10 +287,10 @@ def _fetch_page_tokens_via_playwright(minr: int) -> list[dict]:
                 if rec:
                     pages_by_key[(rec["invnr"], rec["page"])] = rec
                     # The DOM fallback above can return pages of an item other
-                    # than this link's, so a description that starts with an
-                    # inventarisnummer is only kept for that number.
+                    # than this link's, so only a register description whose
+                    # leading inventarisnummer matches may be retained.
                     leading = re.match(r"\s*(\d+)\b", text)
-                    if text and (leading is None or int(leading.group(1)) == rec["invnr"]):
+                    if leading is not None and int(leading.group(1)) == rec["invnr"]:
                         inv_texts.setdefault(rec["invnr"], text)
 
             if (idx + 1) % 25 == 0:
