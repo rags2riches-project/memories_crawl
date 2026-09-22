@@ -96,11 +96,14 @@ def test_202_counts_as_missing_where_the_pipeline_says_so(tmp_path, sleeps):
     assert len(session.calls) == 1
 
 
-@pytest.mark.parametrize("exc", [
-    requests.exceptions.ConnectionError("Failed to resolve host"),
-    requests.exceptions.ConnectTimeout("timed out"),
-    requests.exceptions.ChunkedEncodingError("Connection broken: ConnectionResetError(104)"),
-])
+@pytest.mark.parametrize(
+    "exc",
+    [
+        requests.exceptions.ConnectionError("Failed to resolve host"),
+        requests.exceptions.ConnectTimeout("timed out"),
+        requests.exceptions.ChunkedEncodingError("Connection broken: ConnectionResetError(104)"),
+    ],
+)
 def test_transient_errors_are_retried_then_succeed(tmp_path, sleeps, exc):
     """A DNS failure, a timeout or a reset must not end the run (issue: #22 kin)."""
     dest = tmp_path / "0001.jpg"
@@ -176,8 +179,15 @@ def test_redirects_are_left_to_requests_when_unset(tmp_path, sleeps):
 # -- the pipelines are actually wired to it ------------------------------------
 
 PIPELINES = [
-    "bhic", "drentsarchief", "friesland", "gelderland", "nationaalarchief",
-    "noordholland", "overijssel", "utrechtsarchief", "zeeland",
+    "bhic",
+    "drentsarchief",
+    "friesland",
+    "gelderland",
+    "nationaalarchief",
+    "noordholland",
+    "overijssel",
+    "utrechtsarchief",
+    "zeeland",
 ]
 
 
@@ -200,9 +210,9 @@ def test_pipeline_survives_a_dns_failure(tmp_path, no_backoff, name):
     Before this, five pipelines let the exception out of Downloader.run and
     every remaining page of the register was forfeited with it.
     """
-    session = Session(*[
-        requests.exceptions.ConnectionError("Failed to resolve 'preserve2.archieven.nl'")
-    ] * 3)
+    session = Session(
+        *[requests.exceptions.ConnectionError("Failed to resolve 'preserve2.archieven.nl'")] * 3
+    )
     got = _download_file_of(name)(session, "https://x.invalid/a.jpg", tmp_path / "a.jpg")
     assert got == "failed"
 
