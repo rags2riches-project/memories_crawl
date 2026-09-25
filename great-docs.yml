@@ -136,7 +136,6 @@ reference:
       - limburg.ARCHIVE_CODES
       - limburg.ARCHIVE_NAME
       - limburg.IMAGE_BASE
-      - limburg.IMAGE_FORMAT
       - limburg.MAIS_ADT
       - limburg.MAIS_VAST
       - limburg.ARCHIVE
