@@ -33,7 +33,7 @@ class Body:
 class Resp:
     def __init__(self, status_code: int = 200, body: Body | None = None) -> None:
         self.status_code = status_code
-        self._body = body or Body([b"jpeg"])
+        self._body = body or Body([b"\xff\xd8\xffjpeg"])
         self.headers: dict[str, str] = {}
 
     def iter_content(self, size: int):
@@ -69,13 +69,13 @@ def _fetch(session: Session, dest: Path, sleeps: list[float], **kw) -> str:
 def test_writes_the_file_and_reports_downloaded(tmp_path, sleeps):
     dest = tmp_path / "0001.jpg"
     assert _fetch(Session(Resp()), dest, sleeps) == "downloaded"
-    assert dest.read_bytes() == b"jpeg"
+    assert dest.read_bytes() == b"\xff\xd8\xffjpeg"
     assert sleeps == []
 
 
 def test_existing_file_is_not_refetched(tmp_path, sleeps):
     dest = tmp_path / "0001.jpg"
-    dest.write_bytes(b"already here")
+    dest.write_bytes(b"\xff\xd8\xffalready here")
     session = Session(Resp())
     assert _fetch(session, dest, sleeps) == "exists"
     assert session.calls == []
@@ -109,7 +109,7 @@ def test_transient_errors_are_retried_then_succeed(tmp_path, sleeps, exc):
     dest = tmp_path / "0001.jpg"
     session = Session(exc, Resp())
     assert _fetch(session, dest, sleeps) == "downloaded"
-    assert dest.read_bytes() == b"jpeg"
+    assert dest.read_bytes() == b"\xff\xd8\xffjpeg"
     assert sleeps == [download.DEFAULT_BACKOFF]
 
 
@@ -129,9 +129,9 @@ def test_body_breaking_mid_stream_is_retried(tmp_path, sleeps):
     """The old helpers wrapped only session.get, so a broken body escaped."""
     dest = tmp_path / "0001.jpg"
     broken = Resp(body=Body([b"aa", b"bb", b"cc"], fail_after=1))
-    session = Session(broken, Resp(body=Body([b"whole"])))
+    session = Session(broken, Resp(body=Body([b"\xff\xd8\xffwhole"])))
     assert _fetch(session, dest, sleeps) == "downloaded"
-    assert dest.read_bytes() == b"whole"
+    assert dest.read_bytes() == b"\xff\xd8\xffwhole"
 
 
 def test_a_broken_transfer_leaves_no_file_behind(tmp_path, sleeps):
@@ -183,6 +183,7 @@ PIPELINES = [
     "drentsarchief",
     "friesland",
     "gelderland",
+    "limburg",
     "nationaalarchief",
     "noordholland",
     "overijssel",
@@ -194,7 +195,8 @@ PIPELINES = [
 def _download_file_of(name: str):
     import importlib
 
-    return importlib.import_module(f"memories_crawl.{name}")._download_file
+    mod = importlib.import_module(f"memories_crawl.{name}")
+    return mod._download_one if name == "limburg" else mod._download_file
 
 
 @pytest.fixture
@@ -222,7 +224,69 @@ def test_pipeline_recovers_from_one_reset(tmp_path, no_backoff, name):
     dest = tmp_path / "a.jpg"
     session = Session(
         requests.exceptions.ChunkedEncodingError("Connection broken: ConnectionResetError(104)"),
-        Resp(body=Body([b"scan"])),
+        Resp(body=Body([b"\xff\xd8\xffscan"])),
     )
     assert _download_file_of(name)(session, "https://x.invalid/a.jpg", dest) == "downloaded"
-    assert dest.read_bytes() == b"scan"
+    assert dest.read_bytes() == b"\xff\xd8\xffscan"
+
+
+@pytest.mark.parametrize(
+    "body", [b"\x89PNG\r\n\x1a\npreview", b"<svg>placeholder</svg>", b"", b"\xff\xd8"]
+)
+@pytest.mark.parametrize("suffix", [".jpg", ".JPEG"])
+def test_invalid_jpeg_body_is_failed_and_not_saved(tmp_path, sleeps, body, suffix):
+    dest = tmp_path / f"scan{suffix}"
+    session = Session(Resp(body=Body([body])))
+    assert _fetch(session, dest, sleeps) == "failed"
+    assert not dest.exists()
+    assert not dest.with_suffix(suffix + ".part").exists()
+    assert len(session.calls) == 1
+
+
+@pytest.mark.parametrize("old", [b"\x89PNG\r\n\x1a\npreview", b"<svg/>", b""])
+def test_resume_replaces_old_preview_with_original(tmp_path, sleeps, old):
+    dest = tmp_path / "scan.jpg"
+    dest.write_bytes(old)
+    session = Session(Resp())
+    assert _fetch(session, dest, sleeps) == "downloaded"
+    assert dest.read_bytes() == b"\xff\xd8\xffjpeg"
+    assert _fetch(session, dest, sleeps) == "exists"
+    assert len(session.calls) == 1
+
+
+def test_failed_replacement_preserves_old_file_and_can_be_retried(tmp_path, sleeps):
+    dest = tmp_path / "scan.jpg"
+    old = b"\x89PNG\r\n\x1a\npreview"
+    dest.write_bytes(old)
+    assert _fetch(Session(Resp(body=Body([b"<svg/>"]))), dest, sleeps) == "failed"
+    assert dest.read_bytes() == old
+    assert not dest.with_suffix(".jpg.part").exists()
+    assert _fetch(Session(Resp()), dest, sleeps) == "downloaded"
+
+
+def test_jpeg_signature_can_span_stream_chunks(tmp_path, sleeps):
+    dest = tmp_path / "scan.jpg"
+    session = Session(Resp(body=Body([b"", b"\xff", b"\xd8", b"\xffscan"])))
+    assert _fetch(session, dest, sleeps) == "downloaded"
+    assert dest.read_bytes() == b"\xff\xd8\xffscan"
+
+
+def test_other_image_formats_keep_their_bytes_and_resume(tmp_path, sleeps):
+    dest = tmp_path / "scan.jp2"
+    body = b"\x00\x00\x00\x0cjP  \r\n\x87\n"
+    session = Session(Resp(body=Body([body])))
+    assert _fetch(session, dest, sleeps) == "downloaded"
+    assert dest.read_bytes() == body
+    assert _fetch(session, dest, sleeps) == "exists"
+    assert len(session.calls) == 1
+
+
+@pytest.mark.parametrize("name", PIPELINES)
+def test_pipeline_rejects_preview_and_repairs_it_on_resume(tmp_path, no_backoff, name):
+    dest = tmp_path / "scan.jpg"
+    preview = b"\x89PNG\r\n\x1a\npreview"
+    dest.write_bytes(preview)
+    fetch = _download_file_of(name)
+    assert fetch(Session(Resp(body=Body([preview]))), "https://x.invalid/a", dest) == "failed"
+    assert fetch(Session(Resp()), "https://x.invalid/a", dest) == "downloaded"
+    assert dest.read_bytes() == b"\xff\xd8\xffjpeg"

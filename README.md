@@ -419,18 +419,18 @@ Uses the **MAIS Internet viewer** (`miadt=37`, `mivast=37`) on the `geldersarchi
 1. For each kantoor (micode), navigates to the inv2 root, picks the "Register IV" top-level minr (filtering out Tafel VI / V-bis).
 2. Enumerates leaf inventarisnummers via the inv3 tree, expanding all period sub-sections and filtering for digitized (h_scan) items.
 3. For each leaf invnr, navigates to the inv2 minr page (strip auto-loads), force-loads all strip chunks via `mi_strip_store.populate()`, and harvests thumbnail URLs (`fonc-gea`).
-4. Converts thumbnail URLs to full-size (`?format=large`, 1024-pixel-tall PNG) and downloads.
+4. Converts thumbnail URLs to full-size (`?format=download`, original JPEG) and downloads.
 
 **Image URL format:**
 ```
 https://preserve2.archieven.nl/mi-37/fonc-gea/{code}/{invnr}/
     {invnr}-{page:04d}.jp2
-    ?format=large&miadt=37&miahd={miahd}&mivast=37&rdt={rdt}&open={token}
+    ?format=download&miadt=37&miahd={miahd}&mivast=37&rdt={rdt}&open={token}
 ```
 
-The full-resolution JP2 is only reachable via IIPSrv tile-server requests; `format=large` is the practical maximum.
+The preserve path ends in `.jp2`, but `format=download` returns the original JPEG using the cached strip tokens.
 
-Inventory and token caches (`inventory_{code}.json`, `tokens_{code}.json` with partial saves every 25 invnrs) skip Playwright on reruns. Already-downloaded kantoren are tracked in `<out-dir>/.cache/gelderland/done.txt`.
+Inventory and token caches (`inventory_{code}.json`, `tokens_{code}.json` with partial saves every 25 invnrs) skip Playwright on reruns. Already-downloaded kantoren are tracked in `<out-dir>/.cache/gelderland/done_originals.txt`.
 
 **First-time setup**: run `uv run playwright install chromium` after `uv sync`.
 
@@ -512,7 +512,7 @@ The pipeline uses **Playwright/Chromium** to:
 
 1. Navigate to the inv2 root for each code, expand all "Records N t/m M" batch toggles, then harvest digitized invnr minr values (marked with `h_scan.gif`). Exclusion: 07.D08's sibling "Tafels 5bis" section is never entered.
 2. For each digitized invnr: navigate to the inv2 page (strip auto-loads), click "Volgende" until all pages are loaded, harvest per-page tokens from `<img src>` attributes.
-3. Download full-size PNG scans (`format=large`, 714x1024).
+3. Download original JPEG scans (`format=download`).
 
 Inventory and token caches (`<out-dir>/.cache/limburg/inventory_{code}.json`, `<out-dir>/.cache/limburg/tokens_{code}_{invnr}.json`) skip the slow Playwright pass on reruns.
 
@@ -553,8 +553,8 @@ The HUA also uses a MAIS Internet viewer (`miadt=39`, `mivast=39`). The pipeline
 2. For each subsection, navigates to the `inv3` view in a single Playwright session.
 3. Calls `mi_inv3_toggle_stk()` for each inventarisnummer to expand the stk3 thumbnail strip inline.
 4. Harvests per-page tokens from the rendered `<img src>` attributes.
-5. Derives full-size URLs by stripping `?format=thumb` from the harvested thumbnail URLs.
-6. Downloads full-size PNG scans.
+5. Derives full-size URLs by setting `format=download` on the harvested thumbnail URLs.
+6. Downloads original JPEG scans.
 
 Unlike Overijssel, each kantoor has a different archive code (`micode`, e.g. `337-2` for Amersfoort, `337-7` for Utrecht), and subsection minr values are discovered dynamically rather than being hardcoded.
 
@@ -576,9 +576,9 @@ Uses the **MAIS Internet viewer** (`miadt=236`, `mivast=236`, archive code 178) 
 1. Navigates to the inv2 page for archive 178; 15 kantoor-level entries are parsed from the initial DOM.
 2. For each kantoor: expands the tree node to reveal period children, collects their minr values, and filters out Tafel V-bis items.
 3. For each MvS period minr: navigates to the inv3 page, collects all stk3 child items, toggles each one to force-load the thumbnail strip, harvests per-page tokens from `<img src>` attributes.
-4. Converts thumbnail URLs to full-size (removes `?format=thumb`) and downloads.
+4. Converts thumbnail URLs to full-size (sets `format=download`) and downloads.
 
-Token results are cached per period minr in `<out-dir>/.cache/noordholland/tokens_{minr}.json` with partial saves for crash resilience. Already-downloaded kantoren are tracked in `<out-dir>/.cache/noordholland/done.txt`.
+Token results are cached per period minr in `<out-dir>/.cache/noordholland/tokens_{minr}.json` with partial saves for crash resilience. Already-downloaded kantoren are tracked in `<out-dir>/.cache/noordholland/done_originals.txt`.
 
 **First-time setup**: run `uv run playwright install chromium` after `uv sync`.
 
@@ -595,9 +595,9 @@ Uses the **MAIS Internet viewer** (`miadt=239`, `mivast=239`) on the `zeeuwsarch
 2. Expands each kantoor node to reveal inventarisnummers with stk3 inline strips.
 3. Calls `mi_inv3_toggle_stk()` for each inventarisnummer to load the stk3 thumbnail strip.
 4. Force-loads all strip chunks and harvests per-page tokens from `<img src>` attributes.
-5. Derives full-size URLs by stripping `?format=thumb` from thumbnail URLs and downloads scans.
+5. Derives full-size URLs by setting `format=download` on thumbnail URLs and downloads scans.
 
-Token results are cached per kantoor in `<out-dir>/.cache/zeeland/tokens_minr_{minr}.json` with partial saves for crash resilience. Already-downloaded kantoren are tracked in `<out-dir>/.cache/zeeland/done.txt`.
+Token results are cached per kantoor in `<out-dir>/.cache/zeeland/tokens_minr_{minr}.json` with partial saves for crash resilience. Already-downloaded kantoren are tracked in `<out-dir>/.cache/zeeland/done_originals.txt`.
 
 **First-time setup**: run `uv run playwright install chromium` after `uv sync`.
 
@@ -645,7 +645,7 @@ Scans go below the output root (`./scans` unless `--out-dir` says otherwise):
     ├── inventory.json            – same, for the Nationaal Archief's EAD invnrs
     ├── inventory_{code}.json     – discovered inventarisnummers
     ├── tokens_*.json             – harvested Playwright tokens
-    ├── done.txt                  – resume markers
+    ├── done_originals.txt        – resume markers
     └── {archive}_progress.csv    – per-register progress
 ```
 
@@ -682,17 +682,33 @@ Fields vary by archive depending on what metadata is available in the source sys
 All pipelines are designed to be safely restarted:
 
 - **Friesland**: tracks completed registers in `<out-dir>/.cache/friesland/friesland_progress.csv` (rows with `status=done` are skipped); existing per-person directories (with `metadata.json`) are skipped on reruns. The register listing is cached in `registers.json` for 30 days (`--refresh-cache` re-collects it).
-- **Gelderland**: inventory and token cache files (`inventory_{code}.json`, `tokens_{code}.json` with partial saves every 25 invnrs) skip the slow Playwright pass; already-downloaded images are skipped by file existence check. Completed kantoren are tracked in `<out-dir>/.cache/gelderland/done.txt`.
+- **Gelderland**: inventory and token cache files (`inventory_{code}.json`, `tokens_{code}.json` with partial saves every 25 invnrs) skip the slow Playwright pass; already-downloaded images are skipped after a JPEG signature check. Completed kantoren are tracked in `<out-dir>/.cache/gelderland/done_originals.txt`.
 - **Nationaal Archief**: tracks completed inventory numbers in `<out-dir>/.cache/nationaalarchief/nationaalarchief_done.txt`. The invnrs parsed from the EAD XML are cached in `inventory.json` for 30 days (`--refresh-cache` re-collects them); the hardcoded fallback list is never cached.
 - **Drents Archief**: tracks completed deeds in `<out-dir>/.cache/drentsarchief/drentsarchief_deeds.csv` (rows with `status=done` are skipped), written after every deed so an interrupted run keeps its progress; scans are downloaded to a `.part` file and renamed on completion, so a truncated file is never mistaken for a finished one. The register listing is cached in `registers.json` for 30 days (`--refresh-cache` re-collects it).
-- **BHIC**: tracks completed registers in `<out-dir>/.cache/bhic/bhic_progress.csv` (rows with `status=done` are skipped); already-downloaded scans are skipped by file existence check. The 19-page register listing is cached in `registers.json` for 30 days (`--refresh-cache` re-collects it).
-- **Overijssel**: token cache files (`tokens_minr_*.json`) skip the slow Playwright pass; already-downloaded images are skipped by file existence check.
-- **Limburg**: inventory and token cache files (`inventory_{code}.json`, `tokens_{code}_{invnr}.json`) skip the slow Playwright pass; already-downloaded images are skipped by file existence check.
-- **Utrechts Archief**: token cache files (`tokens_{micode}_{minr}.json`, with partial saves every 25 items for crash resilience) skip the slow Playwright pass; already-downloaded images are skipped by file existence check. Completed inventarisnummers are tracked in `done_{kantoor}.txt` per kantoor.
-- **Noord-Holland**: token cache files (`tokens_{minr}.json`, with partial saves for crash resilience) skip the slow Playwright pass; already-downloaded images are skipped by file existence check. Completed kantoren are tracked in `<out-dir>/.cache/noordholland/done.txt`.
-- **Zeeland**: token cache files (`tokens_minr_{minr}.json`, with partial saves for crash resilience) skip the slow Playwright pass; already-downloaded images are skipped by file existence check. Completed kantoren are tracked in `<out-dir>/.cache/zeeland/done.txt`.
+- **BHIC**: tracks completed registers in `<out-dir>/.cache/bhic/bhic_progress.csv` (rows with `status=done` are skipped); already-downloaded scans are skipped after a JPEG signature check. The 19-page register listing is cached in `registers.json` for 30 days (`--refresh-cache` re-collects it).
+- **Overijssel**: token cache files (`tokens_minr_*.json`) skip the slow Playwright pass; already-downloaded images are skipped after a JPEG signature check.
+- **Limburg**: inventory and token cache files (`inventory_{code}.json`, `tokens_{code}_{invnr}.json`) skip the slow Playwright pass; already-downloaded images are skipped after a JPEG signature check.
+- **Utrechts Archief**: token cache files (`tokens_{micode}_{minr}.json`, with partial saves every 25 items for crash resilience) skip the slow Playwright pass; already-downloaded images are skipped after a JPEG signature check. Completed inventarisnummers are tracked in `done_originals_{kantoor}.txt` per kantoor.
+- **Noord-Holland**: token cache files (`tokens_{minr}.json`, with partial saves for crash resilience) skip the slow Playwright pass; already-downloaded images are skipped after a JPEG signature check. Completed kantoren are tracked in `<out-dir>/.cache/noordholland/done_originals.txt`.
+- **Zeeland**: token cache files (`tokens_minr_{minr}.json`, with partial saves for crash resilience) skip the slow Playwright pass; already-downloaded images are skipped after a JPEG signature check. Completed kantoren are tracked in `<out-dir>/.cache/zeeland/done_originals.txt`.
 
-The `done.txt` markers of Gelderland, Noord-Holland and Zeeland record whole kantoren, so
+The `done_originals.txt` markers of Gelderland, Noord-Holland and Zeeland record whole kantoren, so
 a run that fetched only part of one must not write them. `--kantoor` is no finer than the
 marker, so a `--kantoor` run still records the kantoren it finished; a run that also has
 `--invnr` set records nothing and stays stateless with respect to unit completion.
+
+### Upgrading older MAIS downloads (0.5.1)
+
+All six MAIS archives now request `format=download` for original JPEG scans.
+Earlier releases saved PNG thumbnails (300 pixels high) or previews (1024 pixels
+high) with a `.jpg` extension. Rerun your usual command with the same `--out-dir`
+to replace them automatically. Existing JPEGs are retained; inventory and token
+caches are reused. Original scans take substantially more disk space.
+
+Gelderland, Noord-Holland and Zeeland now use `done_originals.txt`; Utrecht uses
+`done_originals_{kantoor}.txt`. Older `done.txt` / `done_{kantoor}.txt` markers
+are ignored so completed runs also get repaired. Failed or missing downloads
+leave their unit incomplete so a later run can retry. Responses saved as `.jpg`
+or `.jpeg` must begin with the JPEG signature; PNG/SVG responses are reported
+as failures and cannot overwrite an existing file. This checks the file type,
+not the resolution or full image integrity.

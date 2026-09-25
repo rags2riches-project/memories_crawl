@@ -23,15 +23,12 @@ Scans are served from preserve3.archieven.nl behind per-page tokens:
     + ?format=thumb&miadt=38&miahd={miahd}&mivast=0&rdt={rdt}&open={token}  → 209×300 PNG
     + ?format=large&miadt=38&miahd={miahd}&mivast=0&rdt={rdt}&open={token}  → 714×1024 PNG
     + ?<tokens>                       (no format param)                     → 209×300 PNG
+    + ?format=download&<tokens>                         → original JPEG
     + no tokens                                        → HTTP 202 SVG placeholder
 
-The "true" archival resolution (2090×3000 JPEG, ~540 KB) is only reachable
-through the IIPSrv tile pyramid (``iipsrv12.fcgi?FIF=cache/fonc-rhcl/<hash>.jp2&CVT=jpeg``),
-but the {invnr, page} → JP2 hash mapping is server-side and only exposed
-inside the per-scan embed page. That would require one extra Playwright
-viewer load per scan – impractical at ~110 k scans. This scraper therefore
-downloads ``format=large`` PNGs, which is the largest readable variant the
-public preserve server returns without zoomify stitching.
+The original JPEG is returned by ``format=download`` with the same strip
+tokens. No extra viewer load or IIPSrv tile stitching is needed. Omitting
+``format`` returns a thumbnail; ``format=large`` is only a 1024-pixel preview.
 
 Strategy
 ────────
@@ -44,7 +41,7 @@ Strategy
    the strip "Volgende" arrow until the snavuit class appears, scraping
    ``img[src*="/fonc-rhcl/"]`` srcs each step. Tokens are cached so reruns
    skip Playwright entirely.
-3. (requests) Download every page at ``format=large``, writing a
+3. (requests) Download every page at ``format=download``, writing a
    ``metadata.json`` sidecar per inventarisnummer.
 
 Dependency: ``uv sync && uv run playwright install chromium``.
@@ -70,7 +67,6 @@ ARCHIVE_NAME = "Regionaal Historisch Centrum Limburg"
 MAIS_ADT = "38"
 MAIS_VAST = "0"
 IMAGE_BASE = "https://preserve3.archieven.nl/mi-0/fonc-rhcl"
-IMAGE_FORMAT = "large"  # 714 × 1024 PNG; see module docstring
 USER_AGENT = "memories-crawl/1.0"
 # Requests per second for the image fetches: the pace the old fixed
 # time.sleep(0.10) after every fetched image produced, now shared across workers.
@@ -430,7 +426,7 @@ def _image_url(code: str, tok: dict) -> str:
     filename = f"NL-MtHCL_{code}_{tok['invnr']}_{tok['page']:04d}.jpg"
     return (
         f"{IMAGE_BASE}/{code}/{tok['invnr']}/{filename}"
-        f"?format={IMAGE_FORMAT}"
+        "?format=download"
         f"&miadt={MAIS_ADT}&miahd={tok['miahd']}"
         f"&mivast={MAIS_VAST}&rdt={tok['rdt']}&open={tok['open']}"
     )
@@ -444,19 +440,8 @@ def _session() -> requests.Session:
 
 
 def _download_one(session: requests.Session, url: str, dest: Path) -> str:
-    if dest.exists() and dest.stat().st_size > 0:
-        return "exists"
-    resp = session.get(url, stream=True, timeout=120)
-    if resp.status_code in (202, 404):
-        # 202 + SVG placeholder = tokens expired or rejected
-        return "missing"
-    resp.raise_for_status()
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    with open(dest, "wb") as f:
-        for chunk in resp.iter_content(65536):
-            if chunk:
-                f.write(chunk)
-    return "downloaded"
+    """Fetch one scan with shared validation, retries and atomic replacement."""
+    return download.fetch_file(session, url, dest, missing_statuses=(202, 404))
 
 
 def _write_metadata(dest_dir: Path, code: str, item: dict, n_scans: int) -> None:

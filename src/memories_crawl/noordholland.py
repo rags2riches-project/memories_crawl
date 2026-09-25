@@ -18,7 +18,7 @@ Scans are served from:
     https://preserve-nha.archieven.nl/mi-236/fonc-nha/178/{invnr}/
         NL-HlmNHA_178_{invnr}_{page:04d}.jpg
     ?format=thumb&miadt=236&miahd={miahd}&mivast=236&rdt={rdt}&open={token}
-    (remove ?format=thumb for full-size)
+    (replace format=thumb with format=download for the original JPEG)
 
 Strategy
 ────────
@@ -28,7 +28,7 @@ Strategy
 3. For each MvS period minr: navigate to the inv3 page, collect all stk3 child
    items, toggle each one to force-load the strip, harvest thumbnail URLs,
    and remove strips from the DOM.
-4. Convert thumbnail URLs to full-size (remove ?format=thumb) and download.
+4. Convert thumbnail URLs to full-size (set format=download) and download.
 5. Cache tokens per period minr so reruns skip Playwright entirely.
 
 Dependency: ``uv sync && uv run playwright install chromium``.
@@ -243,10 +243,7 @@ def _parse_thumb_url(url: str) -> dict | None:
 
 
 def _fullsize_url(thumb_url: str) -> str:
-    url = thumb_url.replace("?format=thumb&", "?")
-    url = url.replace("&format=thumb", "")
-    url = url.replace("?format=thumb", "")
-    return url
+    return download.mais_original_url(thumb_url)
 
 
 # ---------------------------------------------------------------------------
@@ -574,12 +571,13 @@ def main(
         summary = RunSummary(ARCHIVE, "Noord-Holland", unit_name="kantoren")
         kantoren_seen: set[str] = set()
 
-        # done.txt records whole period sections, which is only ever accurate for
+        # done_originals.txt records whole period sections, which is only ever accurate for
         # an unfiltered run: under --invnr we fetch a subset, so writing the marker
         # would make every later run skip the rest of the section.
         filtered = invnrs is not None
 
-        done_file = paths.cache_file(ARCHIVE, "done.txt")
+        # Preview-era completion must not prevent upgrading existing scans.
+        done_file = paths.cache_file(ARCHIVE, "done_originals.txt")
         done: set[str] = set()
         if done_file.exists() and not filtered:
             done = set(done_file.read_text().splitlines())
@@ -707,7 +705,8 @@ def main(
 
             print(f"  Section totals: {section_tally.describe()}")
 
-            mark_done(str(period_minr))
+            if not section_tally.missing:
+                mark_done(str(period_minr))
 
         if (filtered or kantoor_filter is not None) and not matched_any:
             print(

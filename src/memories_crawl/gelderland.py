@@ -42,10 +42,9 @@ Image URLs look like::
         ?format=thumb&miadt=37&miahd=4431669227&mivast=37
         &rdt=20251205&open=46EC9
 
-Replace ``?format=thumb`` with ``?format=large`` to get a 756×1024 PNG
-(~500 KB/page).  The full-resolution JP2 is only reachable via the IIPSrv tile
-server, whose ``{invnr,page → jp2 hash}`` map is not exposed without an extra
-viewer load per page; ``format=large`` is the practical maximum.
+Replace ``format=thumb`` with ``format=download`` to retrieve the original
+JPEG using the cached tokens, even though the preserve path ends in ``.jp2``.
+Omitting the format returns a thumbnail; ``format=large`` is only a preview.
 
 Strategy
 ────────
@@ -57,7 +56,7 @@ Strategy
    ``h_scan`` marker.
 3. **Harvest**: for each digitized leaf, navigate to its inv2&minr=… page,
    force-load all strip chunks, and harvest fonc-gea thumbnail URLs.
-4. **Download**: build the ``?format=large`` variant of each thumb URL and
+4. **Download**: build the ``?format=download`` variant of each thumb URL and
    write it to disk as ``{invnr}-{page:04d}.jpg``.
 5. **Cache**: per-kantoor inventory + tokens are cached so reruns skip
    Playwright entirely once they exist.
@@ -281,14 +280,7 @@ def _parse_thumb_url(url: str) -> dict | None:
 
 
 def _fullsize_url(thumb_url: str) -> str:
-    """Switch ?format=thumb → ?format=large so the server returns the
-    1024-pixel-tall PNG instead of the 300-pixel thumbnail."""
-    url = thumb_url.replace("?format=thumb&", "?")
-    url = url.replace("&format=thumb", "")
-    url = url.replace("?format=thumb", "")
-    if "format=large" not in url:
-        url = url.replace("?miadt=", "?format=large&miadt=")
-    return url
+    return download.mais_original_url(thumb_url)
 
 
 # ---------------------------------------------------------------------------
@@ -675,12 +667,13 @@ def main(
 
         summary = RunSummary(ARCHIVE, "Gelderland", unit_name="kantoren")
 
-        # done.txt records whole kantoren, which is only ever accurate for an
+        # done_originals.txt records whole kantoren, which is only ever accurate for an
         # unfiltered run: under --invnr we fetch a subset, so writing the marker
         # would make every later run skip the rest of the kantoor.
         filtered = invnrs is not None
 
-        done_file = paths.cache_file(ARCHIVE, "done.txt")
+        # Preview-era completion must not prevent upgrading existing scans.
+        done_file = paths.cache_file(ARCHIVE, "done_originals.txt")
         done: set[str] = set()
         if done_file.exists() and not filtered:
             done = set(done_file.read_text().splitlines())
@@ -790,7 +783,8 @@ def main(
 
             print(f"  Kantoor totals: {kantoor_tally.describe()}")
 
-            mark_done(code)
+            if not kantoor_tally.missing:
+                mark_done(code)
 
         if (filtered or kantoor_filter is not None) and not matched_any:
             _warn_no_match(invnrs, kantoren)

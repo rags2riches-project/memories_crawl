@@ -9,7 +9,7 @@ How it works
 Images live at:
     https://preserve2.archieven.nl/mi-20/fonc-hco/0136.4/{invnr}/
         NL-ZlHCO_0136.4_{invnr}_{page:04d}.jpg
-    Full-size: add query params  ?miadt=141&miahd={miahd}&mivast=20&rdt={rdt}&open={token}
+    Full-size: ?format=download&miadt=141&miahd={miahd}&mivast=20&rdt={rdt}&open={token}
     Thumbnail: add  ?format=thumb&miadt=141&miahd={miahd}&mivast=20&rdt={rdt}&open={token}
     Without tokens → HTTP 202 + SVG placeholder.
 
@@ -316,7 +316,7 @@ def _image_url(invnr: int, page: int, miahd: int, rdt: str, open_token: str) -> 
     filename = f"NL-ZlHCO_0136.4_{invnr}_{page:04d}.jpg"
     return (
         f"{IMAGE_BASE}/{invnr}/{filename}"
-        f"?miadt={MAIS_ADT}&miahd={miahd}&mivast={MAIS_VAST}&rdt={rdt}&open={open_token}"
+        f"?format=download&miadt={MAIS_ADT}&miahd={miahd}&mivast={MAIS_VAST}&rdt={rdt}&open={open_token}"
     )
 
 

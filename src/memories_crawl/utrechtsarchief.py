@@ -13,11 +13,11 @@ inventarisnummers.
 
 Each inventarisnummer's scans are accessed via stk3 inline strips on the
 inv3 page. Thumbnail URLs are harvested from the stk3 strip's sslider DOM,
-and full-size images are downloaded by stripping the ?format=thumb parameter.
+and full-size images are downloaded by setting the format=download parameter.
 
 Scans are served from:
     https://img.hetutrechtsarchief.nl/mi-39/hua/archiefbank/.../NL-UtHUA_{micode}_{invnr}_{page:04d}.jpg
-    ?miadt=39&miahd={miahd}&mivast=39&rdt={rdt}&open={token}
+    ?format=download&miadt=39&miahd={miahd}&mivast=39&rdt={rdt}&open={token}
 
 Each page has unique miahd/open tokens that are session-bound.
 
@@ -29,7 +29,7 @@ Strategy
 4. Collect all stk3 child item onclick argument strings from the DOM.
 5. For each stk3 item: call mi_inv3_toggle_stk() to expand inline,
    force-load all strip chunks, harvest thumbnail URLs, remove strip from DOM.
-6. Convert thumbnail URLs to full-size (remove ?format=thumb) and download.
+6. Convert thumbnail URLs to full-size (set format=download) and download.
 7. Cache harvested page tokens per subsection minr to skip Playwright on reruns.
 """
 
@@ -217,11 +217,7 @@ def _parse_thumb_url(url: str) -> dict | None:
 
 
 def _fullsize_url(thumb_url: str) -> str:
-    """Convert a thumbnail URL to a full-size download URL by removing format=thumb."""
-    url = thumb_url.replace("?format=thumb&", "?")
-    url = url.replace("&format=thumb", "")
-    url = url.replace("?format=thumb", "")
-    return url
+    return download.mais_original_url(thumb_url)
 
 
 # ---------------------------------------------------------------------------
@@ -523,7 +519,8 @@ def main(
                 print("  WARNING: no subsections found, skipping")
                 continue
 
-            done_file = paths.cache_file(ARCHIVE, f"done_{kantoor}.txt")
+            # Preview-era completion must not prevent upgrading existing scans.
+            done_file = paths.cache_file(ARCHIVE, f"done_originals_{kantoor}.txt")
             done: set[str] = set()
             if done_file.exists():
                 done = set(done_file.read_text().splitlines())
@@ -629,8 +626,9 @@ def main(
 
                     print(tally.describe(len(inv_pages)))
 
-                    with open(done_file, "a") as f:
-                        f.write(key + "\n")
+                    if not tally.missing:
+                        with open(done_file, "a") as f:
+                            f.write(key + "\n")
 
                     # Fold in per register, not per section, so a run that dies
                     # midway still reports everything it downloaded.
