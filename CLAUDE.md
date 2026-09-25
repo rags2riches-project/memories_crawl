@@ -27,7 +27,7 @@ Everything is written below `--out-dir` (default `./scans`, overridable with
 
 * scans → `<out-dir>/{archive}/…`
 * caches that make reruns cheap (inventory listings, Playwright token harvests,
-  `done.txt` resume markers, progress CSVs) → `<out-dir>/.cache/{archive}/`
+  `done_originals.txt` resume markers, progress CSVs) → `<out-dir>/.cache/{archive}/`
 
 Pipelines must not hardcode `Path("scans/…")`. Use `paths.archive_dir(ARCHIVE)`
 for scan directories and `paths.cache_file(ARCHIVE, name)` for caches; the latter
@@ -290,9 +290,9 @@ absence of evidence is never evidence of absence.
 
 **Warnings.** A filter that matches nothing across the whole archive prints a
 `WARNING` line, so `--invnr 99999` is distinguishable from a successful no-op.
-A kantoor already recorded in `done.txt` counts as matched.
+A kantoor already recorded in `done_originals.txt` counts as matched.
 
-**`done.txt` interaction.** The markers are keyed by kantoor, which is coarser
+**`done_originals.txt` interaction.** The markers are keyed by kantoor, which is coarser
 than `--invnr` but exactly as coarse as `--kantoor`: a `--kantoor` run may
 record the kantoren it fully processed, a run with `--invnr` set may not.
 `tests/test_invnr_filter.py` (issue #22) and `tests/test_kantoor_filter.py`
@@ -319,7 +319,7 @@ The HCO uses a MAIS Internet viewer. Each scan page requires unique per-page tok
 ```
 https://preserve2.archieven.nl/mi-20/fonc-hco/0136.4/{invnr}/
     NL-ZlHCO_0136.4_{invnr}_{page:04d}.jpg
-    ?miadt=141&miahd={miahd}&mivast=20&rdt={rdt}&open={token}
+    ?format=download&miadt=141&miahd={miahd}&mivast=20&rdt={rdt}&open={token}
 ```
 
 **Kantoor minr values** (verified April 2026):
@@ -350,10 +350,10 @@ Each pipeline was live-tested against the real APIs and servers.
 | **drentsarchief** | ✅ | ✅ verified | Register-driven: one `/register` request (557 registers) resolves the whole inventory, then deeds/persons are paged per register. `--list-invnrs` runs in ~1 s; `--invnr` touches only matching registers. Smoke-tested 2026-09-16: Coevorden invnr 1 → 176 deeds, ~6 MB/scan. |
 | **overijssel** | ✅ | ⚠️ slow first run | Playwright + Chromium work. Almelo has 256 stk3 items → ~1825 pages of tokens; collecting tokens takes ~6 min per kantoor. Token results are cached in `<out-dir>/.cache/overijssel/tokens_minr_{minr}.json` — reruns skip Playwright entirely. |
 | **utrechtsarchief** | ✅ | ⚠️ slow first run | Playwright + Chromium. Uses stk3 inline toggle (same approach as Overijssel). Amersfoort verified: 66,615 pages from 211 invnrs across 2 subsections (~12 min harvest). Token results cached per subsection — reruns skip Playwright. 11 kantoren configured. |
-| **limburg** | ✅ | ✅ verified | archieven.nl MAIS (miadt=38, mivast=0). Two codes: 07.D03 (1818-1900, 111 digitized of 1,314, ~104k scans, by place) and 07.D08 (1901-1927, 42 digitized of 460, ~7k scans, by kantoor). End-to-end smoke-tested: invnr 1 (Amby) → 527 pages; invnr 491 (Gennep) → 207 pages. Inventory + tokens cached per code/invnr; reruns skip Playwright. Image format is `format=large` PNG (714×1024); see module docstring for trade-off vs. IIPSrv full-res JP2 path. |
+| **limburg** | ✅ | ✅ verified | archieven.nl MAIS (miadt=38, mivast=0). Two codes: 07.D03 (1818-1900, 111 digitized of 1,314, ~104k scans, by place) and 07.D08 (1901-1927, 42 digitized of 460, ~7k scans, by kantoor). End-to-end smoke-tested: invnr 1 (Amby) → 527 pages; invnr 491 (Gennep) → 207 pages. Inventory + tokens cached per code/invnr; reruns skip Playwright. Image format is the original JPEG via `format=download` with cached strip tokens. |
 | **noordholland** | ✅ | ⚠️ not yet tested | noord-hollandsarchief.nl MAIS (miadt=236, mivast=236, micode=178). Uses stk3 inline toggle (same approach as Overijssel/Utrecht). Kantoor sections discovered dynamically from inv2 tree. Tokens cached per section minr; reruns skip Playwright. Image server: preserve-nha.archieven.nl/mi-0/fonc-nha/178/. |
-| **zeeland** | ✅ | ✅ verified | Zeeuws Archief MAIS (miadt=239, mivast=239, micode=398). Hybrid approach: inv3 tree for discovery (kantoor→sub-section→invnr with h_scan markers), inv2 minr pages for strip harvesting (auto-loads strip, force-load all chunks via mi_strip_store.populate()). Goes verified: 990 digitized invnrs of 1,109, invnr 1 → 327 pages, invnr 2 → 373 pages. Image server: preserve-zaf.archieven.nl/mi-239/fonc-zaf/398/. Downloads at `format=large` PNG (673×1024). Filenames include segment slug for uniqueness (e.g. `1-1_0001.jpg`). Tokens cached per kantoor in `tokens_minr_{minr}.json`. |
-| **gelderland** | ✅ | ✅ verified | Gelders Archief MAIS (miadt=37, mivast=37). 21 kantoren, each with its own micode (0021–0037, 0092, 0221–0223). Per-kantoor pipeline: inv2 → pick "Register IV" minr (filter "Tafel VI / V-bis") → inv3 → swapinv-expand period sub-sections → collect leaf invnrs with `h_scan` markers and `^\d+\s` text. Per-invnr token harvest = navigate to inv2&minr=…, force-load strip via `mi_strip_store.populate()`, harvest `img[src*="fonc-gea"]`. Borculo (0022) verified end-to-end: 49 digitized invnrs, invnr 1 → 38 pages, full-size 1024×858 PNG (~570 KB/page). Image server: preserve2.archieven.nl/mi-37/fonc-gea/{code}/. Filenames `{invnr}-{page:04d}.jpg`. Inventory + tokens cached per code; reruns skip Playwright. |
+| **zeeland** | ✅ | ✅ verified | Zeeuws Archief MAIS (miadt=239, mivast=239, micode=398). Hybrid approach: inv3 tree for discovery (kantoor→sub-section→invnr with h_scan markers), inv2 minr pages for strip harvesting (auto-loads strip, force-load all chunks via mi_strip_store.populate()). Goes verified: 990 digitized invnrs of 1,109, invnr 1 → 327 pages, invnr 2 → 373 pages. Image server: preserve-zaf.archieven.nl/mi-239/fonc-zaf/398/. Downloads original JPEGs via `format=download`. Filenames include segment slug for uniqueness (e.g. `1-1_0001.jpg`). Tokens cached per kantoor in `tokens_minr_{minr}.json`. |
+| **gelderland** | ✅ | ✅ verified | Gelders Archief MAIS (miadt=37, mivast=37). 21 kantoren, each with its own micode (0021–0037, 0092, 0221–0223). Per-kantoor pipeline: inv2 → pick "Register IV" minr (filter "Tafel VI / V-bis") → inv3 → swapinv-expand period sub-sections → collect leaf invnrs with `h_scan` markers and `^\d+\s` text. Per-invnr token harvest = navigate to inv2&minr=…, force-load strip via `mi_strip_store.populate()`, harvest `img[src*="fonc-gea"]`. Borculo (0022) verified end-to-end: 49 digitized invnrs, invnr 1 → 38 pages (the historical PNG previews are replaced on rerun). Image server: preserve2.archieven.nl/mi-37/fonc-gea/{code}/. Filenames `{invnr}-{page:04d}.jpg`. Inventory + tokens cached per code; reruns skip Playwright. |
 
 **Setup reminder**: Chromium must be installed with `uv run playwright install chromium` (not bare `playwright install chromium`).
 
@@ -493,7 +493,7 @@ inv2 root:      https://www.archieven.nl/nl/zoeken
 per-invnr page: …same…&minr={minr}  (strip auto-loads)
 image URL:      https://preserve3.archieven.nl/mi-0/fonc-rhcl/{code}/{invnr}/
                   NL-MtHCL_{code}_{invnr}_{page:04d}.jpg
-                  ?format=large&miadt=38&miahd={miahd}&mivast=0&rdt={rdt}&open={token}
+                  ?format=download&miadt=38&miahd={miahd}&mivast=0&rdt={rdt}&open={token}
 ```
 
 Pagination quirks:
@@ -505,12 +505,10 @@ Pagination quirks:
   loaded by clicking the ``.snext`` (Volgende) arrow. The scraper steps the
   arrow until the ``.snavuit`` (disabled) class appears.
 
-Image format: ``format=large`` returns a 714×1024 PNG (~700 KB-1.2 MB per
-page). The archival 2090×3000 JPEG is only available via the IIPSrv zoomify
-tile server (``iipsrv12.fcgi?FIF=cache/fonc-rhcl/{hash}.jp2&CVT=jpeg``), but
-the ``{invnr,page} → JP2 hash`` map is only exposed inside each scan's
-embed-viewer HTML, so reaching full-res would require an extra viewer load
-per scan (~110 k loads). See module docstring for details.
+Image format: ``format=download`` returns the original JPEG with the cached
+strip tokens. No extra viewer requests or tile stitching are required.
+``format=large`` returns only a 1024-pixel preview; omitting the format returns
+a thumbnail.
 
 Caches:
 - ``<out-dir>/.cache/limburg/inventory_{code}.json``  – list of digitized invnrs
@@ -533,21 +531,21 @@ inv2 root:      https://noord-hollandsarchief.nl/bronnen/archieven
 inv3 (kantoor): …same…&miaet=1&micode=178&minr={minr}&milang=nl&miview=inv3
 image URL:      https://preserve-nha.archieven.nl/mi-0/fonc-nha/178/{invnr}/
                   NL-HlmNHA_178_{invnr}_{page:04d}.jpg
-                  ?miadt=236&miahd={miahd}&mivast=0&rdt={rdt}&open={token}
+                  ?format=download&miadt=236&miahd={miahd}&mivast=0&rdt={rdt}&open={token}
 ```
 
-**Image format**: Remove `?format=thumb` from thumbnail URLs to get full-size.
-Note that the preserve URL uses `mivast=0` (not 236), same pattern as Limburg.
+**Image format**: Set `format=download` on thumbnail URLs to get the original JPEG.
+Preserve the `mivast` value and every other token from the harvested URL.
 
 **Caches**:
 - ``<out-dir>/.cache/noordholland/sections.json`` – discovered kantoor sections
 - ``<out-dir>/.cache/noordholland/tokens_{minr}.json`` – per-page tokens for one kantoor section
 - ``<out-dir>/.cache/noordholland/tokens_{minr}_partial.json`` – incremental save (crash-resilient)
 
-**Resume**: ``<out-dir>/.cache/noordholland/done.txt`` tracks completed kantoor sections.
+**Resume**: ``<out-dir>/.cache/noordholland/done_originals.txt`` tracks completed kantoor sections.
 Partial token caches allow resuming interrupted harvest runs.
 
-``done.txt`` is keyed by kantoor section, which is coarser than ``--invnr`` filters at,
+``done_originals.txt`` is keyed by kantoor section, which is coarser than ``--invnr`` filters at,
 so a filtered run neither reads nor writes it: ``--invnr`` runs are stateless with
 respect to unit completion, and per-file existence checks keep repeat runs cheap.
 A filter that matches nothing anywhere prints a warning instead of exiting silently.
@@ -571,14 +569,14 @@ scraper takes a **hybrid approach**:
    ``mi_strip_store.populate()``, then thumbnail ``<img>`` elements with
    ``src*="fonc-zaf"`` are harvested from the DOM.
 
-3. **Download** – Thumbnails have ``?format=thumb``; replacing with ``?format=large``
-   yields 673×1024 PNG. The preserve server is ``preserve-zaf.archieven.nl/mi-239/``.
+3. **Download** – Thumbnails have ``?format=thumb``; replacing with ``?format=download``
+   yields the original JPEG. The preserve server is ``preserve-zaf.archieven.nl/mi-239/``.
 
 **Image URL format:**
 ```
 https://preserve-zaf.archieven.nl/mi-239/fonc-zaf/398/{invnr}/
     NL-MdbZA_398_{invnr}_{slug}_{page:04d}.jpg
-    ?format=large&miadt=239&miahd={miahd}&mivast=239&rdt={rdt}&open={token}
+    ?format=download&miadt=239&miahd={miahd}&mivast=239&rdt={rdt}&open={token}
 ```
 Some images omit the ``{slug}_`` component (e.g. ``NL-MdbZA_398_1_0001.jpg``). The
 slug provides uniqueness when the same trailing page number appears in multiple
@@ -603,10 +601,10 @@ scan segments within one register.
 - ``<out-dir>/.cache/zeeland/tokens_minr_{minr}.json`` – per-page tokens for one kantoor
 - ``<out-dir>/.cache/zeeland/tokens_minr_{minr}_partial.json`` – incremental save (crash-resilient)
 
-**Resume**: ``<out-dir>/.cache/zeeland/done.txt`` tracks completed kantoren.
+**Resume**: ``<out-dir>/.cache/zeeland/done_originals.txt`` tracks completed kantoren.
 Partial token caches allow resuming interrupted harvest runs.
 
-``done.txt`` is keyed by kantoor, which is coarser than ``--invnr`` filters at,
+``done_originals.txt`` is keyed by kantoor, which is coarser than ``--invnr`` filters at,
 so a filtered run neither reads nor writes it: ``--invnr`` runs are stateless with
 respect to unit completion, and per-file existence checks keep repeat runs cheap.
 A filter that matches nothing anywhere prints a warning instead of exiting silently.
@@ -616,7 +614,8 @@ The per-kantoor token cache is suppressed the same way, since it claims to hold
 every page in the kantoor; a warm cache is still narrowed to the requested invnrs.
 
 **Smoke test** (2026-05-11): Goes invnr 1 → 327 pages, invnr 2 → 373 pages.
-Downloads at ``format=large`` PNG (673×1024, ~300KB–950KB per page).
+That historical test used ``format=large`` PNG previews; current downloads
+use ``format=download`` for original JPEGs.
 
 ### Gelderland (Gelders Archief) – per-kantoor MAIS code
 
@@ -661,16 +660,13 @@ scraper does.
 ```
 https://preserve2.archieven.nl/mi-37/fonc-gea/{code}/{invnr}/
     {invnr}-{page:04d}.jp2
-    ?format=large&miadt=37&miahd={miahd}&mivast=37&rdt={rdt}&open={token}
+    ?format=download&miadt=37&miahd={miahd}&mivast=37&rdt={rdt}&open={token}
 ```
 Note the unusual filename convention: the file is named after the
 inventarisnummer (``{invnr}-{page:04d}.jp2``), not a fixed archive
 identifier.  The path itself also contains ``{invnr}`` between the code and
-filename.  ``?format=large`` returns a 1024-pixel-tall PNG (~500 KB/page);
-the full-resolution JP2 is only reachable via IIPSrv tile-server requests
-that would require an extra viewer load per page (~tens of thousands of
-extra requests project-wide), so ``format=large`` is the practical maximum
-here.
+filename. ``?format=download`` returns the original JPEG even though the
+path ends in ``.jp2``. The cached strip tokens are sufficient.
 
 **Caches**:
 - ``<out-dir>/.cache/gelderland/inventory_{code}.json`` – discovered leaf invnrs for one
@@ -679,9 +675,9 @@ here.
 - ``<out-dir>/.cache/gelderland/tokens_{code}_partial.json`` – incremental save written
   every 25 invnrs so a crash mid-harvest doesn't lose work
 
-**Resume**: ``<out-dir>/.cache/gelderland/done.txt`` tracks completed kantoor codes.
+**Resume**: ``<out-dir>/.cache/gelderland/done_originals.txt`` tracks completed kantoor codes.
 
-``done.txt`` is keyed by kantoor code, which is coarser than ``--invnr`` filters at,
+``done_originals.txt`` is keyed by kantoor code, which is coarser than ``--invnr`` filters at,
 so a filtered run neither reads nor writes it: ``--invnr`` runs are stateless with
 respect to unit completion, and per-file existence checks keep repeat runs cheap.
 A filter that matches nothing anywhere prints a warning instead of exiting silently.
@@ -691,6 +687,23 @@ The per-kantoor code token cache is suppressed the same way, since it claims to 
 every page in the kantoor code; a warm cache is still narrowed to the requested invnrs.
 
 **Smoke test** (2026-05-11): Borculo (code 0022) end-to-end – 49 digitized
-invnrs discovered, invnr 1 ("1 1818 eerste halfjaar") → 38 pages, full-size
-download = 1024×858 PNG (~570 KB).  Tafel-only kantoor sections are
+invnrs discovered, invnr 1 ("1 1818 eerste halfjaar") → 38 pages. That historical test
+downloaded 1024×858 PNG previews; current downloads request original JPEGs.  Tafel-only kantoor sections are
 automatically skipped at the Register-IV selection step.
+
+## Original MAIS scans and upgrades (issue #42)
+
+All six MAIS pipelines request ``format=download``. URL transformations use
+``download.mais_original_url`` to replace any format parameter while preserving
+all tokens. Overijssel and Limburg build the same parameter first in their URLs.
+``format=large`` is a preview; omitting ``format`` returns a thumbnail.
+
+``download.fetch_file`` requires JPEG magic bytes for ``.jpg`` / ``.jpeg`` files,
+including existing files. Non-JPEG previews are re-fetched, and invalid responses
+fail without overwriting the old file. Other extensions retain their native bytes.
+Limburg's ``_download_one`` also delegates to this helper.
+
+Completion markers are now ``done_originals.txt`` (Gelderland, Noord-Holland,
+Zeeland) and ``done_originals_{kantoor}.txt`` (Utrecht). Ignore pre-0.5.1 markers
+so a normal rerun can repair existing corpora, while reusing inventory/token
+caches. Write completion only when the unit has no failed or missing pages.

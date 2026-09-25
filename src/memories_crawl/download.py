@@ -37,6 +37,7 @@ from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 import requests
 
@@ -297,6 +298,24 @@ DEFAULT_RETRIES = 3
 DEFAULT_BACKOFF = 5.0
 
 
+def mais_original_url(thumb_url: str) -> str:
+    """Request the original JPEG using the cached MAIS strip tokens.
+
+    Omitting ``format`` returns a thumbnail. ``format=download`` is the
+    viewer's download route, including for preserve URLs ending in ``.jp2``.
+    """
+    parts = urlsplit(thumb_url)
+    query = [(k, v) for k, v in parse_qsl(parts.query, keep_blank_values=True) if k != "format"]
+    return urlunsplit(parts._replace(query=urlencode([("format", "download"), *query])))
+
+
+def _valid_image(path: Path, *, jpeg: bool) -> bool:
+    """Check the JPEG signature, or nonempty content for other image formats."""
+    with path.open("rb") as stream:
+        prefix = stream.read(3)
+    return prefix == b"\xff\xd8\xff" if jpeg else bool(prefix)
+
+
 def _discard(path: Path) -> None:
     """Remove a part-file, ignoring the case where it was never created."""
     try:
@@ -348,7 +367,10 @@ def fetch_file(
     retryable -- an expired MAIS token, say) fails immediately; repeating it
     would only be rude.
     """
-    if dest.exists() and dest.stat().st_size > 0:
+    # Old MAIS downloads were PNG previews saved as .jpg. Revisit those on
+    # resume and validate replacements before atomically overwriting them.
+    jpeg = dest.suffix.lower() in {".jpg", ".jpeg"}
+    if dest.exists() and _valid_image(dest, jpeg=jpeg):
         return "exists"
 
     # Looked up late, like RateLimiter._do_sleep: binding time.sleep as a
@@ -384,6 +406,10 @@ def fetch_file(
                 for chunk in resp.iter_content(65536):
                     if chunk:
                         fh.write(chunk)
+            if not _valid_image(tmp, jpeg=jpeg):
+                _discard(tmp)
+                print(f"      invalid image for {dest}; page failed", flush=True)
+                return "failed"
             tmp.rename(dest)
             return "downloaded"
         except requests.RequestException as exc:

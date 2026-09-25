@@ -403,3 +403,14 @@ def test_cli_listing_run_prints_no_summary(monkeypatch, capsys, tmp_path) -> Non
 
     cli.main()
     assert "run summary" not in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("mod", ALL)
+@pytest.mark.parametrize("status", ["failed", "missing"])
+def test_incomplete_downloads_do_not_mark_unit_complete(mod, h, status):
+    h.status = status
+    first = mod.main()
+    assert first.pages.missing == len(ALL_INVNRS)
+    h.status = "downloaded"
+    second = mod.main()
+    assert second.pages.downloaded == len(ALL_INVNRS)

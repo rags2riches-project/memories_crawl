@@ -487,7 +487,7 @@ def test_count_scans_preserves_full_cache_when_invnr_selected(
     )
     assert calls == [False]
     assert path.read_text() == contents
-    assert not paths.cache_file(mod.ARCHIVE, "done.txt").exists()
+    assert not paths.cache_file(mod.ARCHIVE, "done_originals.txt").exists()
     _, rows = _read_csv(out)
     assert [(r["invnr"], r["pages"]) for r in rows] == [("1", "3")]
 

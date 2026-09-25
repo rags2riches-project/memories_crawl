@@ -115,7 +115,7 @@ def h(monkeypatch, tmp_path):
 
 
 def _done_file(mod, tmp_path):
-    return tmp_path / paths.cache_dir(mod.ARCHIVE) / "done.txt"
+    return tmp_path / paths.cache_dir(mod.ARCHIVE) / "done_originals.txt"
 
 
 ALL = [
@@ -232,3 +232,39 @@ def test_warm_token_cache_still_respects_filter(mod, h, monkeypatch):
 
     mod.main(invnrs={"4"})
     assert h.downloaded_invnrs == {4}
+
+
+@pytest.mark.parametrize("mod", ALL)
+@pytest.mark.parametrize("legacy_location", [False, True])
+def test_legacy_completion_markers_do_not_hide_previews(
+    mod, h, tmp_path, monkeypatch, legacy_location
+):
+    from memories_crawl import download
+
+    # First establish the real output layout, then model a 0.5.0 corpus.
+    mod.main()
+    _done_file(mod, tmp_path).unlink()
+    root = paths.archive_dir(mod.ARCHIVE) if legacy_location else paths.cache_dir(mod.ARCHIVE)
+    (root / "done.txt").write_text("A\nB\n")
+    scans = list(paths.archive_dir(mod.ARCHIVE).rglob("*.jpg"))
+    for scan in scans:
+        scan.write_bytes(b"\x89PNG\r\n\x1a\npreview")
+
+    class Response:
+        status_code = 200
+
+        def iter_content(self, size):
+            yield b"\xff\xd8\xfforiginal"
+
+    class Session:
+        def get(self, url, **kwargs):
+            assert "format=download" in url
+            return Response()
+
+    monkeypatch.setattr(
+        mod, "_download_file", lambda session, url, dest: download.fetch_file(Session(), url, dest)
+    )
+    run = mod.main()
+    assert run.pages.downloaded == len(ALL_INVNRS)
+    assert all(scan.read_bytes() == b"\xff\xd8\xfforiginal" for scan in scans)
+    assert mod.main().pages.total == 0

@@ -21,7 +21,7 @@ Scans are accessed by navigating to each inventarisnummer's inv2 page:
   …&miview=inv2&minr={invnr_minr}
 The strip viewer auto-loads on this page (25 thumbnails at a time).  We force-load
 all strip chunks via the mi_strip_store's populate() method, then harvest thumbnail
-URLs from <img src*="fonc-zaf"> elements.  Full-size downloads replace ?format=thumb.
+URLs from <img src*="fonc-zaf"> elements.  Original JPEG downloads use format=download.
 
 Strategy
 ────────
@@ -31,7 +31,7 @@ Strategy
    Filter out Tafel V-bis / non-digitized (no h_scan marker) items.
 3. For each digitized invnr: navigate to inv2&minr={invnr_minr}, force-load all
    strip chunks, harvest thumbnail fonc-zaf URLs, parse tokens.
-4. Derive full-size URLs by stripping ?format=thumb and download.
+4. Derive full-size URLs by setting format=download and download.
 5. Cache harvested tokens per kantoor minr so reruns skip Playwright.
 
 Dependency: ``uv sync && uv run playwright install chromium``.
@@ -230,12 +230,7 @@ def _parse_thumb_url(url: str) -> dict | None:
 
 
 def _fullsize_url(thumb_url: str) -> str:
-    url = thumb_url.replace("?format=thumb&", "?")
-    url = url.replace("&format=thumb", "")
-    url = url.replace("?format=thumb", "")
-    if "format=large" not in url:
-        url = url.replace("?miadt=", "?format=large&miadt=")
-    return url
+    return download.mais_original_url(thumb_url)
 
 
 # ---------------------------------------------------------------------------
@@ -608,12 +603,13 @@ def main(
 
         summary = RunSummary(ARCHIVE, "Zeeland", unit_name="kantoren")
 
-        # done.txt records whole kantoren, which is only ever accurate for an
+        # done_originals.txt records whole kantoren, which is only ever accurate for an
         # unfiltered run: under --invnr we fetch a subset, so writing the marker
         # would make every later run skip the rest of the kantoor.
         filtered = invnrs is not None
 
-        done_file = paths.cache_file(ARCHIVE, "done.txt")
+        # Preview-era completion must not prevent upgrading existing scans.
+        done_file = paths.cache_file(ARCHIVE, "done_originals.txt")
         done: set[str] = set()
         if done_file.exists() and not filtered:
             done = set(done_file.read_text().splitlines())
@@ -768,7 +764,8 @@ def main(
 
             print(f"  Kantoor totals: {kantoor_tally.describe()}")
 
-            mark_done(str(kantoor_minr))
+            if not kantoor_tally.missing:
+                mark_done(str(kantoor_minr))
 
         if (filtered or kantoor_filter is not None) and not matched_any:
             print(

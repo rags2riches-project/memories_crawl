@@ -157,7 +157,7 @@ def h(request, monkeypatch, tmp_path):
 
 
 def _done_file(mod, tmp_path):
-    return tmp_path / paths.cache_dir(mod.ARCHIVE) / "done.txt"
+    return tmp_path / paths.cache_dir(mod.ARCHIVE) / "done_originals.txt"
 
 
 # ---------------------------------------------------------------------------
