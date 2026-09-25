@@ -701,7 +701,16 @@ all tokens. Overijssel and Limburg build the same parameter first in their URLs.
 ``download.fetch_file`` requires JPEG magic bytes for ``.jpg`` / ``.jpeg`` files,
 including existing files. Non-JPEG previews are re-fetched, and invalid responses
 fail without overwriting the old file. Other extensions retain their native bytes.
-Limburg's ``_download_one`` also delegates to this helper.
+Limburg's ``_download_one`` also delegates to this helper (looked up as
+``download.fetch_file`` at call time, which downstream wrappers patch).
+
+Limburg pages are ``NL-MtHCL_{code}_{invnr}_{page:04d}.jpg`` since 0.5.2. Up to
+0.5.1 they were ``….png``, which escaped the JPEG check: old previews counted as
+``exists``. ``limburg._download_one`` migrates a legacy ``.png`` first: JPEG
+bytes are renamed to the ``.jpg`` name (``exists``, no request); a real PNG
+stays until the ``.jpg`` has landed, then is removed. Limburg has no completion
+markers, so a normal rerun revisits every page. Every MAIS dest must end in
+``.jpg`` so the signature check applies.
 
 Completion markers are now ``done_originals.txt`` (Gelderland, Noord-Holland,
 Zeeland) and ``done_originals_{kantoor}.txt`` (Utrecht). Ignore pre-0.5.1 markers

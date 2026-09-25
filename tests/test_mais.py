@@ -132,3 +132,179 @@ def test_utrecht_repairs_legacy_completed_register_and_retries_failures(
     before = len(calls)
     assert utrechtsarchief.main(workers=1).pages.skipped == 1
     assert len(calls) == before
+
+
+# ---------------------------------------------------------------------------
+# Limburg pages are saved as .jpg; pre-0.5.2 .png names are migrated (#42).
+# ---------------------------------------------------------------------------
+
+JPEG = b"\xff\xd8\xfforiginal"
+PNG_PREVIEW = b"\x89PNG\r\n\x1a\npreview"
+LIMBURG_ITEM = {
+    "invnr": 1,
+    "title": "Amby, 1818-1828",
+    "name": "Amby",
+    "datering": "1818-1828",
+    "axis": "Plaats",
+    "minr": 7,
+    "hasScan": True,
+}
+
+
+class _LimburgResponse:
+    def __init__(self, status_code, body):
+        self.status_code = status_code
+        self.body = body
+        self.headers = {}
+
+    def iter_content(self, size):
+        yield self.body
+
+
+class _LimburgSession:
+    """Answers every request with the same scripted response, and records it."""
+
+    def __init__(self, status_code=200, body=JPEG):
+        self.status_code = status_code
+        self.body = body
+        self.calls = []
+
+    def get(self, url, **kwargs):
+        self.calls.append(url)
+        return _LimburgResponse(self.status_code, self.body)
+
+
+def test_limburg_page_filename_is_jpg():
+    tok = {"invnr": 12, "page": 3}
+    assert limburg._page_filename("07.D08", tok) == "NL-MtHCL_07.D08_12_0003.jpg"
+
+
+@pytest.fixture
+def limburg_run(tmp_path, monkeypatch):
+    """Run limburg.main() over one cached register of two pages, no Playwright."""
+    from memories_crawl import paths
+
+    paths.set_out_dir(tmp_path)
+    monkeypatch.setattr(limburg, "ARCHIVE_CODES", {"07.D03": limburg.ARCHIVE_CODES["07.D03"]})
+    monkeypatch.setattr(limburg, "_harvest_inventory", lambda code: [LIMBURG_ITEM])
+    monkeypatch.setattr(limburg, "_harvest_all_tokens", lambda code, items: None)
+    monkeypatch.setattr(download.time, "sleep", lambda _: None)
+    tokens = [
+        {"invnr": 1, "page": page, "miahd": 1, "rdt": "20200425", "open": f"T{page}"}
+        for page in (1, 2)
+    ]
+    limburg._save_json(limburg._tokens_cache_path("07.D03", 1), tokens)
+    reg = paths.archive_dir("limburg") / "07.D03" / "1"
+
+    def run(session):
+        monkeypatch.setattr(limburg, "_session", lambda: session)
+        return limburg.main(workers=1)
+
+    yield reg, run
+    paths.set_out_dir(None)
+
+
+def test_limburg_saves_pages_as_validated_jpg(limburg_run):
+    reg, run = limburg_run
+    session = _LimburgSession()
+    assert run(session).pages.downloaded == 2
+    assert sorted(p.name for p in reg.iterdir()) == [
+        "NL-MtHCL_07.D03_1_0001.jpg",
+        "NL-MtHCL_07.D03_1_0002.jpg",
+        "metadata.json",
+    ]
+    assert all("format=download" in url for url in session.calls)
+    # A rerun finds both pages and makes no request.
+    assert run(session).pages.skipped == 2
+    assert len(session.calls) == 2
+
+
+def test_limburg_renames_jpeg_saved_as_png_without_downloading(limburg_run):
+    """0.5.1 saved the original JPEG under .png: rename it, never fetch it again."""
+    reg, run = limburg_run
+    reg.mkdir(parents=True)
+    for page in (1, 2):
+        (reg / f"NL-MtHCL_07.D03_1_{page:04d}.png").write_bytes(JPEG + bytes([page]))
+    session = _LimburgSession()
+    summary = run(session)
+    assert session.calls == []
+    assert summary.pages.skipped == 2
+    assert not list(reg.glob("*.png"))
+    for page in (1, 2):
+        assert (reg / f"NL-MtHCL_07.D03_1_{page:04d}.jpg").read_bytes() == JPEG + bytes([page])
+
+
+def test_limburg_replaces_png_preview_then_removes_it(limburg_run):
+    reg, run = limburg_run
+    reg.mkdir(parents=True)
+    for page in (1, 2):
+        (reg / f"NL-MtHCL_07.D03_1_{page:04d}.png").write_bytes(PNG_PREVIEW)
+    session = _LimburgSession()
+    assert run(session).pages.downloaded == 2
+    assert len(session.calls) == 2
+    assert not list(reg.glob("*.png"))
+    assert (reg / "NL-MtHCL_07.D03_1_0001.jpg").read_bytes() == JPEG
+
+
+@pytest.mark.parametrize(
+    "status,body",
+    [
+        (200, b"<svg>placeholder</svg>"),
+        (200, PNG_PREVIEW),
+        (200, b"<html>error</html>"),
+        (403, b""),
+    ],
+)
+def test_limburg_failed_download_keeps_legacy_preview(limburg_run, status, body):
+    reg, run = limburg_run
+    reg.mkdir(parents=True)
+    legacy = reg / "NL-MtHCL_07.D03_1_0001.png"
+    legacy.write_bytes(PNG_PREVIEW)
+    summary = run(_LimburgSession(status, body))
+    assert summary.pages.downloaded == 0
+    assert legacy.read_bytes() == PNG_PREVIEW
+    assert not list(reg.glob("*.jpg"))
+    assert not list(reg.glob("*.part"))
+    # The next run with a working server still repairs it.
+    assert run(_LimburgSession()).pages.downloaded == 2
+    assert not legacy.exists()
+
+
+def test_limburg_202_placeholder_is_missing_and_keeps_legacy(tmp_path):
+    legacy = tmp_path / "NL-MtHCL_07.D03_1_0001.png"
+    legacy.write_bytes(PNG_PREVIEW)
+    dest = legacy.with_suffix(".jpg")
+    session = _LimburgSession(202, b"<svg/>")
+    assert limburg._download_one(session, "https://x.invalid/a", dest) == "missing"
+    assert legacy.read_bytes() == PNG_PREVIEW
+    assert not dest.exists()
+
+
+def test_limburg_existing_jpg_drops_stale_legacy_copy(tmp_path):
+    dest = tmp_path / "NL-MtHCL_07.D03_1_0001.jpg"
+    dest.write_bytes(JPEG)
+    legacy = dest.with_suffix(".png")
+    legacy.write_bytes(PNG_PREVIEW)
+    session = _LimburgSession()
+    assert limburg._download_one(session, "https://x.invalid/a", dest) == "exists"
+    assert session.calls == []
+    assert dest.read_bytes() == JPEG
+    assert not legacy.exists()
+
+
+def test_limburg_calls_fetch_file_through_the_module(tmp_path, monkeypatch):
+    """Wrappers (e.g. a downscaling crawl) patch download.fetch_file at runtime."""
+    seen = []
+
+    def patched(session, url, dest, **kwargs):
+        seen.append((dest, kwargs))
+        dest.write_bytes(JPEG)
+        return "downloaded"
+
+    monkeypatch.setattr(download, "fetch_file", patched)
+    dest = tmp_path / "NL-MtHCL_07.D03_1_0001.jpg"
+    legacy = dest.with_suffix(".png")
+    legacy.write_bytes(PNG_PREVIEW)
+    assert limburg._download_one(_LimburgSession(), "https://x.invalid/a", dest) == "downloaded"
+    assert seen == [(dest, {"missing_statuses": (202, 404)})]
+    assert not legacy.exists()

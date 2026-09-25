@@ -512,7 +512,7 @@ The pipeline uses **Playwright/Chromium** to:
 
 1. Navigate to the inv2 root for each code, expand all "Records N t/m M" batch toggles, then harvest digitized invnr minr values (marked with `h_scan.gif`). Exclusion: 07.D08's sibling "Tafels 5bis" section is never entered.
 2. For each digitized invnr: navigate to the inv2 page (strip auto-loads), click "Volgende" until all pages are loaded, harvest per-page tokens from `<img src>` attributes.
-3. Download original JPEG scans (`format=download`).
+3. Download original JPEG scans (`format=download`) to `{code}/{invnr}/NL-MtHCL_{code}_{invnr}_{page:04d}.jpg`.
 
 Inventory and token caches (`<out-dir>/.cache/limburg/inventory_{code}.json`, `<out-dir>/.cache/limburg/tokens_{code}_{invnr}.json`) skip the slow Playwright pass on reruns.
 
@@ -627,7 +627,7 @@ Scans go below the output root (`./scans` unless `--out-dir` says otherwise):
 │   └── {Gemeente}_{NNN}_NNNN.jpg …
 ├── limburg/{code}/{invnr}/
 │   ├── metadata.json
-│   └── 0001.jpg …
+│   └── NL-MtHCL_{code}_{invnr}_0001.jpg …
 ├── overijssel/{kantoor}/{invnr}/
 │   ├── metadata.json
 │   └── 0000.jpg …
@@ -712,3 +712,15 @@ leave their unit incomplete so a later run can retry. Responses saved as `.jpg`
 or `.jpeg` must begin with the JPEG signature; PNG/SVG responses are reported
 as failures and cannot overwrite an existing file. This checks the file type,
 not the resolution or full image integrity.
+
+### Upgrading Limburg downloads (0.5.2)
+
+Up to 0.5.1 Limburg saved every page as `NL-MtHCL_{code}_{invnr}_{page:04d}.png`.
+Because only `.jpg` / `.jpeg` names get the JPEG signature check, the old
+1024-pixel PNG previews were accepted as already downloaded and 0.5.1 never
+replaced them. Pages are now saved as `….jpg`. Rerun `memories-crawl limburg`
+with the same `--out-dir`: a `.png` that already holds a JPEG (downloaded by
+0.5.1) is renamed to `.jpg` without a new request; a real PNG preview is
+replaced by the original and removed once the `.jpg` is in place. A failed
+download leaves the `.png` untouched for the next run. Limburg keeps no
+completion markers, so every rerun revisits every page.

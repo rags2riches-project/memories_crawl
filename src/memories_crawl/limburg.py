@@ -41,8 +41,11 @@ Strategy
    the strip "Volgende" arrow until the snavuit class appears, scraping
    ``img[src*="/fonc-rhcl/"]`` srcs each step. Tokens are cached so reruns
    skip Playwright entirely.
-3. (requests) Download every page at ``format=download``, writing a
-   ``metadata.json`` sidecar per inventarisnummer.
+3. (requests) Download every page at ``format=download`` to
+   ``{code}/{invnr}/NL-MtHCL_{code}_{invnr}_{page:04d}.jpg``, writing a
+   ``metadata.json`` sidecar per inventarisnummer.  Releases up to 0.5.1
+   saved pages as ``….png``; a rerun renames such a file when it already
+   holds the original JPEG, and replaces (then removes) a real PNG preview.
 
 Dependency: ``uv sync && uv run playwright install chromium``.
 """
@@ -423,7 +426,7 @@ def _ensure_tokens(page, code: str, invnr: int, minr: int) -> list[dict]:
 
 
 def _image_url(code: str, tok: dict) -> str:
-    filename = f"NL-MtHCL_{code}_{tok['invnr']}_{tok['page']:04d}.jpg"
+    filename = _page_filename(code, tok)
     return (
         f"{IMAGE_BASE}/{code}/{tok['invnr']}/{filename}"
         "?format=download"
@@ -439,9 +442,46 @@ def _session() -> requests.Session:
     return s
 
 
+def _page_filename(code: str, tok: dict) -> str:
+    """On-disk name of one page: the server's own filename, ``.jpg`` included.
+
+    Up to 0.5.1 pages were saved as ``….png``.  ``download.fetch_file`` only
+    checks the JPEG signature for ``.jpg`` / ``.jpeg`` names, so under ``.png``
+    an old 1024-pixel PNG preview passed as "exists" and was never replaced,
+    and a fresh download went unvalidated.
+    """
+    return f"NL-MtHCL_{code}_{tok['invnr']}_{tok['page']:04d}.jpg"
+
+
+_JPEG_MAGIC = b"\xff\xd8\xff"
+
+
+def _is_jpeg(path: Path) -> bool:
+    try:
+        with path.open("rb") as stream:
+            return stream.read(3) == _JPEG_MAGIC
+    except OSError:
+        return False
+
+
 def _download_one(session: requests.Session, url: str, dest: Path) -> str:
-    """Fetch one scan with shared validation, retries and atomic replacement."""
-    return download.fetch_file(session, url, dest, missing_statuses=(202, 404))
+    """Fetch one scan with shared validation, retries and atomic replacement.
+
+    Migrates the pre-0.5.2 ``.png`` name first.  A legacy file that already
+    holds JPEG bytes (0.5.1 downloaded the original under the wrong suffix) is
+    renamed to ``dest`` and reported as ``exists`` -- no request is made.  A
+    legacy file that really is a PNG preview is left alone until the original
+    has landed at ``dest``, then removed; a failed download keeps it.
+    """
+    legacy = dest.with_suffix(".png")
+    if legacy.exists() and not _is_jpeg(dest) and _is_jpeg(legacy):
+        legacy.replace(dest)
+        return "exists"
+    # Looked up at call time on purpose: wrappers patch download.fetch_file.
+    status = download.fetch_file(session, url, dest, missing_statuses=(202, 404))
+    if status in ("downloaded", "exists") and legacy.exists() and _is_jpeg(dest):
+        legacy.unlink(missing_ok=True)
+    return status
 
 
 def _write_metadata(dest_dir: Path, code: str, item: dict, n_scans: int) -> None:
@@ -644,7 +684,7 @@ def main(
                 jobs = [
                     download.Job(
                         _image_url(code, tok),
-                        dest_dir / f"NL-MtHCL_{code}_{tok['invnr']}_{tok['page']:04d}.png",
+                        dest_dir / _page_filename(code, tok),
                     )
                     for tok in tokens
                 ]
