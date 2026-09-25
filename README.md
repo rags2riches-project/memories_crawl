@@ -558,7 +558,7 @@ The HUA also uses a MAIS Internet viewer (`miadt=39`, `mivast=39`). The pipeline
 
 Unlike Overijssel, each kantoor has a different archive code (`micode`, e.g. `337-2` for Amersfoort, `337-7` for Utrecht), and subsection minr values are discovered dynamically rather than being hardcoded.
 
-Token results are cached per subsection in `<out-dir>/.cache/utrechtsarchief/tokens_{micode}_{minr}.json`. Partial results are saved every 25 items for crash resilience. Already-downloaded inventarisnummers are tracked in `<out-dir>/.cache/utrechtsarchief/done_{kantoor}.txt`.
+Token results are cached per subsection in `<out-dir>/.cache/utrechtsarchief/tokens_{micode}_{minr}.json`. Partial results are saved every 25 items for crash resilience. Already-downloaded inventarisnummers are tracked in `<out-dir>/.cache/utrechtsarchief/done_originals_{kantoor}.txt`.
 
 **First-time setup**: run `uv run playwright install chromium` after `uv sync`.
 
